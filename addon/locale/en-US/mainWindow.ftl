@@ -9,3 +9,14 @@ item-section-example2-sidenav-tooltip =
 item-section-example2-button-tooltip =
     .tooltiptext = Unregister this section
 item-info-row-example-label = Example Row
+
+llm-panel-head =
+    .label = LLM Assistant
+llm-panel-sidenav-tooltip =
+    .tooltiptext = Ask questions about the current reader item
+llm-panel-send =
+    .label = Send
+llm-panel-placeholder = Ask about this paper...
+llm-panel-status-ready = Ready
+llm-panel-status-sending = Sending…
+llm-panel-status-error = Error

@@ -1,33 +1,26 @@
 <linkset>
   <html:link rel="localization" href="__addonRef__-preferences.ftl" />
 </linkset>
-<groupbox
-  onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window })"
->
+<groupbox onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window })">
   <label><html:h2 data-l10n-id="pref-title"></html:h2></label>
-  <checkbox
-    id="zotero-prefpane-__addonRef__-enable"
-    preference="enable"
-    data-l10n-id="pref-enable"
-  />
-  <hbox>
-    <html:label
-      for="zotero-prefpane-__addonRef__-input"
-      data-l10n-id="pref-input"
-    ></html:label>
-    <html:input
-      type="text"
-      id="zotero-prefpane-__addonRef__-input"
-      preference="input"
-    ></html:input>
-  </hbox>
-  <hbox class="virtualized-table-container" flex="1" height="300px">
-    <html:div id="__addonRef__-table-container" />
+
+  <vbox class="pref-row">
+    <html:label for="__addonRef__-api-base" data-l10n-id="pref-api-base" />
+    <html:input id="__addonRef__-api-base" type="text" preference="apiBase" flex="1" />
+  </vbox>
+
+  <vbox class="pref-row">
+    <html:label for="__addonRef__-api-key" data-l10n-id="pref-api-key" />
+    <html:input id="__addonRef__-api-key" type="password" preference="apiKey" flex="1" />
+  </vbox>
+
+  <vbox class="pref-row">
+    <html:label for="__addonRef__-model" data-l10n-id="pref-model" />
+    <html:input id="__addonRef__-model" type="text" preference="model" flex="1" />
+  </vbox>
+
+  <hbox class="pref-row" align="center">
+    <button id="__addonRef__-test-button" data-l10n-id="pref-test-button" />
+    <html:label id="__addonRef__-test-status" class="pref-status" />
   </hbox>
 </groupbox>
-<vbox>
-  <html:label
-    data-l10n-id="pref-help"
-    data-l10n-args='{"time": "__buildTime__","name": "__addonName__","version":"__buildVersion__"}'
-  ></html:label>
-</vbox>
