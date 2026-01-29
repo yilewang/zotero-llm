@@ -34,6 +34,8 @@ Key Features
 
 - 📝 Seamless Integration: Lives inside the Zotero sidebar—no tab switching required.
 
+![image](./assets/demo2.png)
+
 ### Installation
 
 #### Step 1: Download the latest `.xpi` release
@@ -51,39 +53,34 @@ Select the `.xpi` file and restart `Zotero` to complete the installation.
 
 Open `Preferences` and navigate to the `Zotero-LLM` tab.
 
-
+![image](./assets/api_setting.png)
 
 Select your Provider (e.g., OpenAI, Gemini, Local/Ollama).
 
-Paste your API Key.
+Paste your API Base URL, secret key and model name.
 
-(Optional) Select your preferred model (e.g., gpt-4o, claude-3.5-sonnet).
+### Usage Guide
 
-Usage Guide
-Chatting with a Paper
-
-Open any PDF in the Zotero reader.
+To chat with a paper, open any PDF in the Zotero reader.
 
 Open the LLM Assistant sidebar (click the distinct icon in the right-hand toolbar).
 
-Type a question in the chat box, such as "What is the specific role of the thalamus mentioned in this paper?"
+Type a question in the chat box, such as "What is the main conclusion of this paper?"
 
-Using Preset Commands
+### FAQ
 
-Don't want to type? Use the quick buttons above the chat input to get immediate insights:
+> Q: Is it free to use?
 
-Summarize: Get a high-level abstract of the paper.
+A: Yes, absolutely free. You only pay for API calls, if you choose to use a paid API provider. If you think this tool is helpful, please consider supporting me with a star on GitHub or [buy me a coffee](https://buymeacoffee.com/yat.lok) .
 
-Key Points: Extract the core arguments and findings.
+> Q: Does this work with local models? 
 
-Methodology: Quickly understand how the experiments were conducted.
+A: Yes! You can point the plugin to a local endpoint (like Ollama) to run models entirely offline for maximum privacy.
 
-Example Workflow
-Screenshot placeholder: [Insert your screenshot here]
+> Q: Is my data used to train models? 
 
-In this example, the user asks for key points from "Specific connectivity optimizes learning in thalamocortical loops" and receives a structured breakdown of the Central Hypothesis and Core Findings.
+A: No. Since you use your own API key, your data privacy is governed by the terms of the API provider you choose (e.g., OpenAI Enterprise terms usually exclude training on API data).
 
-FAQ
-Q: Does this work with local models? A: Yes! You can point the plugin to a local endpoint (like Ollama) to run models entirely offline for maximum privacy.
+> Q: If I have any questions, how to contact you?
 
-Q: Is my data used to train models? A: No. Since you use your own API key, your data privacy is governed by the terms of the API provider you choose (e.g., OpenAI Enterprise terms usually exclude training on API data).
+A: Please feel free to open an issue on GitHub! I will try my best to help you.
