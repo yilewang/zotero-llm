@@ -408,6 +408,51 @@
   margin: 12px 0;
 }
 
+/* Math Rendering Styles (KaTeX) */
+
+/* Display math block */
+.llm-bubble.assistant .math-display {
+  display: block;
+  text-align: center;
+  margin: 16px 4px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Inline math */
+.llm-bubble.assistant .math-inline {
+  display: inline;
+  vertical-align: baseline;
+}
+
+/* KaTeX specific styling */
+.llm-bubble.assistant .katex {
+  font-size: 1.1em;
+}
+
+.llm-bubble.assistant .math-display .katex {
+  font-size: 1.2em;
+}
+
+.llm-bubble.assistant .katex-display {
+  margin: 0 !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Math error styling */
+.llm-bubble.assistant .math-error {
+  font-family: "Cambria Math", "Times New Roman", Georgia, serif;
+  font-style: italic;
+  color: #cc0000;
+  background: rgba(204, 0, 0, 0.1);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
 .llm-bubble.assistant table {
   width: 100%;
   border-collapse: collapse;

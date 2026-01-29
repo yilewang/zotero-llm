@@ -3,29 +3,14 @@ import { renderMarkdown } from "../utils/markdown";
 import { callLLMStream, ChatMessage } from "../utils/llmClient";
 import { config } from "../../package.json";
 
+// =============================================================================
+// Constants
+// =============================================================================
+
 const PANE_ID = "llm-context-panel";
-
-// Conversation storage
-interface Message {
-  role: "user" | "assistant";
-  text: string;
-  timestamp: number;
-  streaming?: boolean;
-}
-
-const chatHistory = new Map<number, Message[]>();
-const pdfTextCache = new Map<number, string>();
-
-// Track ongoing requests to allow cancellation
-let currentRequestId = 0;
-let cancelledRequestId = -1;
-
-// Max PDF text length
 const MAX_PDF_LENGTH = 8000;
 const MAX_HISTORY_MESSAGES = 12;
-
-let currentAbortController: AbortController | null = null;
-const shortcutTextCache = new Map<string, string>();
+const HTML_NS = "http://www.w3.org/1999/xhtml";
 
 const SHORTCUT_FILES = [
   { id: "summarize", label: "Summarize", file: "summarize.txt" },
@@ -33,24 +18,79 @@ const SHORTCUT_FILES = [
   { id: "methodology", label: "Methodology", file: "methodology.txt" },
   { id: "limitations", label: "Limitations", file: "limitations.txt" },
   { id: "future-work", label: "Future Work", file: "future-work.txt" },
-];
+] as const;
 
-const getAbortController = () => {
-  const globalAny = ztoolkit.getGlobal("AbortController") as
-    | (new () => AbortController)
-    | undefined;
-  return globalAny || (globalThis as any).AbortController;
-};
+// =============================================================================
+// Types
+// =============================================================================
+
+interface Message {
+  role: "user" | "assistant";
+  text: string;
+  timestamp: number;
+  streaming?: boolean;
+}
+
+// =============================================================================
+// State
+// =============================================================================
+
+const chatHistory = new Map<number, Message[]>();
+const pdfTextCache = new Map<number, string>();
+const shortcutTextCache = new Map<string, string>();
+
+let currentRequestId = 0;
+let cancelledRequestId = -1;
+let currentAbortController: AbortController | null = null;
+
+// =============================================================================
+// Utilities
+// =============================================================================
+
+/** Create an HTML element with optional class and properties */
+function createElement<K extends keyof HTMLElementTagNameMap>(
+  doc: Document,
+  tag: K,
+  className?: string,
+  props?: Partial<HTMLElementTagNameMap[K]>,
+): HTMLElementTagNameMap[K] {
+  const el = doc.createElementNS(HTML_NS, tag) as HTMLElementTagNameMap[K];
+  if (className) el.className = className;
+  if (props) Object.assign(el, props);
+  return el;
+}
+
+/** Get AbortController constructor from global scope */
+function getAbortController(): new () => AbortController {
+  return (
+    (ztoolkit.getGlobal("AbortController") as new () => AbortController) ||
+    (
+      globalThis as typeof globalThis & {
+        AbortController: new () => AbortController;
+      }
+    ).AbortController
+  );
+}
 
 export function registerLLMStyles(win: _ZoteroTypes.MainWindow) {
   const doc = win.document;
   if (doc.getElementById(`${config.addonRef}-styles`)) return;
+
+  // Main styles
   const link = doc.createElement("link") as HTMLLinkElement;
   link.id = `${config.addonRef}-styles`;
   link.rel = "stylesheet";
   link.type = "text/css";
   link.href = `chrome://${config.addonRef}/content/zoteroPane.css`;
   doc.documentElement?.appendChild(link);
+
+  // KaTeX styles for math rendering
+  const katexLink = doc.createElement("link") as HTMLLinkElement;
+  katexLink.id = `${config.addonRef}-katex-styles`;
+  katexLink.rel = "stylesheet";
+  katexLink.type = "text/css";
+  katexLink.href = `chrome://${config.addonRef}/content/vendor/katex/katex.min.css`;
+  doc.documentElement?.appendChild(katexLink);
 }
 
 export function registerReaderContextPanel() {
@@ -86,164 +126,101 @@ export function registerReaderContextPanel() {
 function buildUI(body: Element, item?: Zotero.Item | null) {
   body.textContent = "";
   const doc = body.ownerDocument!;
+  const hasItem = Boolean(item);
+  const iconUrl = `chrome://${config.addonRef}/content/icons/neuron.jpg`;
 
-  const container = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  container.id = "llm-main";
-  container.className = "llm-panel";
+  // Main container
+  const container = createElement(doc, "div", "llm-panel", { id: "llm-main" });
 
-  // Title row
-  const header = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  header.className = "llm-header";
+  // Header section
+  const header = createElement(doc, "div", "llm-header");
+  const headerTop = createElement(doc, "div", "llm-header-top");
+  const headerInfo = createElement(doc, "div", "llm-header-info");
 
-  const headerTop = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  headerTop.className = "llm-header-top";
+  const headerIcon = createElement(doc, "img", "llm-header-icon", {
+    alt: "LLM",
+    src: iconUrl,
+  });
+  const title = createElement(doc, "div", "llm-title", {
+    textContent: "LLM Assistant",
+  });
+  const subtitle = createElement(doc, "div", "llm-subtitle", {
+    textContent: "Ask questions about your documents",
+  });
 
-  const headerInfo = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  headerInfo.className = "llm-header-info";
-
-  const headerIcon = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "img",
-  ) as HTMLImageElement;
-  headerIcon.className = "llm-header-icon";
-  headerIcon.alt = "LLM";
-  headerIcon.src = `chrome://${config.addonRef}/content/icons/neuron.jpg`;
-
-  const title = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  title.className = "llm-title";
-  title.textContent = "LLM Assistant";
-
-  const subtitle = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  subtitle.className = "llm-subtitle";
-  subtitle.textContent = "Ask questions about your documents";
-
-  headerInfo.appendChild(headerIcon);
-  headerInfo.appendChild(title);
-  headerInfo.appendChild(subtitle);
+  headerInfo.append(headerIcon, title, subtitle);
   headerTop.appendChild(headerInfo);
 
-  // Clear button
-  const clearBtn = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "button",
-  ) as HTMLButtonElement;
-  clearBtn.id = "llm-clear";
-  clearBtn.className = "llm-btn-icon";
-  clearBtn.textContent = "Clear";
+  const clearBtn = createElement(doc, "button", "llm-btn-icon", {
+    id: "llm-clear",
+    textContent: "Clear",
+  });
   headerTop.appendChild(clearBtn);
   header.appendChild(headerTop);
-
   container.appendChild(header);
 
   // Chat display area
-  const chatBox = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  chatBox.id = "llm-chat-box";
-  chatBox.className = "llm-messages";
+  const chatBox = createElement(doc, "div", "llm-messages", {
+    id: "llm-chat-box",
+  });
   container.appendChild(chatBox);
 
-  const shortcutsRow = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  shortcutsRow.id = "llm-shortcuts";
-  shortcutsRow.className = "llm-shortcuts";
+  // Shortcuts row
+  const shortcutsRow = createElement(doc, "div", "llm-shortcuts", {
+    id: "llm-shortcuts",
+  });
   container.appendChild(shortcutsRow);
 
-  const shortcutMenu = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  shortcutMenu.id = "llm-shortcut-menu";
-  shortcutMenu.className = "llm-shortcut-menu";
+  // Shortcut context menu
+  const shortcutMenu = createElement(doc, "div", "llm-shortcut-menu", {
+    id: "llm-shortcut-menu",
+  });
   shortcutMenu.style.display = "none";
-
-  const shortcutMenuItem = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "button",
-  ) as HTMLButtonElement;
-  shortcutMenuItem.id = "llm-shortcut-menu-edit";
-  shortcutMenuItem.type = "button";
-  shortcutMenuItem.textContent = "Edit";
-  shortcutMenuItem.className = "llm-shortcut-menu-item";
-  shortcutMenu.appendChild(shortcutMenuItem);
+  const menuEditBtn = createElement(doc, "button", "llm-shortcut-menu-item", {
+    id: "llm-shortcut-menu-edit",
+    type: "button",
+    textContent: "Edit",
+  });
+  shortcutMenu.appendChild(menuEditBtn);
   container.appendChild(shortcutMenu);
 
-  // Input area
-  const inputSection = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  inputSection.className = "llm-input-section";
-
-  const inputBox = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "textarea",
-  ) as HTMLTextAreaElement;
-  inputBox.id = "llm-input";
-  inputBox.placeholder = item ? "Ask a question about this paper..." : "Open a PDF first";
-  inputBox.disabled = !item;
-  inputBox.className = "llm-input";
+  // Input section
+  const inputSection = createElement(doc, "div", "llm-input-section");
+  const inputBox = createElement(doc, "textarea", "llm-input", {
+    id: "llm-input",
+    placeholder: hasItem
+      ? "Ask a question about this paper..."
+      : "Open a PDF first",
+    disabled: !hasItem,
+  });
   inputSection.appendChild(inputBox);
 
-  const actionsRow = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  actionsRow.className = "llm-actions";
-
-  const sendBtn = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
+  // Actions row
+  const actionsRow = createElement(doc, "div", "llm-actions");
+  const sendBtn = createElement(doc, "button", "llm-send-btn", {
+    id: "llm-send",
+    textContent: "Send",
+    disabled: !hasItem,
+  });
+  const cancelBtn = createElement(
+    doc,
     "button",
-  ) as HTMLButtonElement;
-  sendBtn.id = "llm-send";
-  sendBtn.textContent = "Send";
-  sendBtn.disabled = !item;
-  sendBtn.className = "llm-send-btn";
-  actionsRow.appendChild(sendBtn);
-
-  const cancelBtn = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "button",
-  ) as HTMLButtonElement;
-  cancelBtn.id = "llm-cancel";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.className = "llm-send-btn llm-cancel-btn";
+    "llm-send-btn llm-cancel-btn",
+    {
+      id: "llm-cancel",
+      textContent: "Cancel",
+    },
+  );
   cancelBtn.style.display = "none";
-  actionsRow.appendChild(cancelBtn);
 
-  const statusLine = doc.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "div",
-  ) as HTMLDivElement;
-  statusLine.id = "llm-status";
-  statusLine.className = "llm-status";
-  statusLine.textContent = item ? "Ready" : "Select an item or open a PDF";
-  actionsRow.appendChild(statusLine);
+  const statusLine = createElement(doc, "div", "llm-status", {
+    id: "llm-status",
+    textContent: hasItem ? "Ready" : "Select an item or open a PDF",
+  });
 
+  actionsRow.append(sendBtn, cancelBtn, statusLine);
   inputSection.appendChild(actionsRow);
   container.appendChild(inputSection);
-
   body.appendChild(container);
 }
 
@@ -357,51 +334,28 @@ function sanitizeText(text: string) {
   return out;
 }
 
-function getShortcutOverrides(): Record<string, string> {
+/** Get/set JSON preferences with error handling */
+function getJsonPref(key: string): Record<string, string> {
   const raw =
-    (Zotero.Prefs.get(
-      `${config.prefsPrefix}.shortcuts`,
-      true,
-    ) as string) || "";
+    (Zotero.Prefs.get(`${config.prefsPrefix}.${key}`, true) as string) || "";
   if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed || {};
+    return JSON.parse(raw) || {};
   } catch {
     return {};
   }
 }
 
-function setShortcutOverrides(overrides: Record<string, string>) {
-  Zotero.Prefs.set(
-    `${config.prefsPrefix}.shortcuts`,
-    JSON.stringify(overrides),
-    true,
-  );
+function setJsonPref(key: string, value: Record<string, string>): void {
+  Zotero.Prefs.set(`${config.prefsPrefix}.${key}`, JSON.stringify(value), true);
 }
 
-function getShortcutLabelOverrides(): Record<string, string> {
-  const raw =
-    (Zotero.Prefs.get(
-      `${config.prefsPrefix}.shortcutLabels`,
-      true,
-    ) as string) || "";
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed || {};
-  } catch {
-    return {};
-  }
-}
-
-function setShortcutLabelOverrides(overrides: Record<string, string>) {
-  Zotero.Prefs.set(
-    `${config.prefsPrefix}.shortcutLabels`,
-    JSON.stringify(overrides),
-    true,
-  );
-}
+const getShortcutOverrides = () => getJsonPref("shortcuts");
+const setShortcutOverrides = (v: Record<string, string>) =>
+  setJsonPref("shortcuts", v);
+const getShortcutLabelOverrides = () => getJsonPref("shortcutLabels");
+const setShortcutLabelOverrides = (v: Record<string, string>) =>
+  setJsonPref("shortcutLabels", v);
 
 async function loadShortcutText(file: string): Promise<string> {
   if (shortcutTextCache.has(file)) {
@@ -419,8 +373,12 @@ async function loadShortcutText(file: string): Promise<string> {
 }
 
 async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
-  const container = body.querySelector("#llm-shortcuts") as HTMLDivElement | null;
-  const menu = body.querySelector("#llm-shortcut-menu") as HTMLDivElement | null;
+  const container = body.querySelector(
+    "#llm-shortcuts",
+  ) as HTMLDivElement | null;
+  const menu = body.querySelector(
+    "#llm-shortcut-menu",
+  ) as HTMLDivElement | null;
   const menuEdit = body.querySelector(
     "#llm-shortcut-menu-edit",
   ) as HTMLButtonElement | null;
@@ -487,41 +445,42 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     if (!menu.dataset.listenerAttached) {
       menu.dataset.listenerAttached = "true";
       menuEdit.addEventListener("click", async (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const shortcutId = menu.dataset.shortcutId || "";
-      if (!shortcutId) return;
-      const target = (menu as any)._target as HTMLButtonElement | null;
-      const currentPrompt = target?.dataset.prompt || "";
-      const currentLabel = target?.dataset.label || "";
-      const updated = await openShortcutEditDialog(
-        currentLabel,
-        currentPrompt,
-      );
-      if (!updated) {
+        e.preventDefault();
+        e.stopPropagation();
+        const shortcutId = menu.dataset.shortcutId || "";
+        if (!shortcutId) return;
+        const target = (menu as any)._target as HTMLButtonElement | null;
+        const currentPrompt = target?.dataset.prompt || "";
+        const currentLabel = target?.dataset.label || "";
+        const updated = await openShortcutEditDialog(
+          currentLabel,
+          currentPrompt,
+        );
+        if (!updated) {
+          menu.style.display = "none";
+          return;
+        }
+        const { label: nextLabel, prompt: nextPrompt } = updated;
+        const next = nextPrompt.trim();
+        const nextOverrides = getShortcutOverrides();
+        nextOverrides[shortcutId] = next;
+        setShortcutOverrides(nextOverrides);
+        const nextLabelOverrides = getShortcutLabelOverrides();
+        const labelValue = nextLabel.trim();
+        if (labelValue) {
+          nextLabelOverrides[shortcutId] = labelValue;
+        } else {
+          delete nextLabelOverrides[shortcutId];
+        }
+        setShortcutLabelOverrides(nextLabelOverrides);
+        if (target) {
+          target.dataset.prompt = next;
+          target.disabled = !next;
+          target.dataset.label =
+            labelValue || target.dataset.label || shortcutId;
+          target.textContent = labelValue || target.dataset.label || shortcutId;
+        }
         menu.style.display = "none";
-        return;
-      }
-      const { label: nextLabel, prompt: nextPrompt } = updated;
-      const next = nextPrompt.trim();
-      const nextOverrides = getShortcutOverrides();
-      nextOverrides[shortcutId] = next;
-      setShortcutOverrides(nextOverrides);
-      const nextLabelOverrides = getShortcutLabelOverrides();
-      const labelValue = nextLabel.trim();
-      if (labelValue) {
-        nextLabelOverrides[shortcutId] = labelValue;
-      } else {
-        delete nextLabelOverrides[shortcutId];
-      }
-      setShortcutLabelOverrides(nextLabelOverrides);
-      if (target) {
-        target.dataset.prompt = next;
-        target.disabled = !next;
-        target.dataset.label = labelValue || target.dataset.label || shortcutId;
-        target.textContent = labelValue || target.dataset.label || shortcutId;
-      }
-      menu.style.display = "none";
       });
 
       body.addEventListener("click", () => {
@@ -694,7 +653,6 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       }
     });
   }
-
 }
 
 async function sendQuestion(
@@ -750,7 +708,9 @@ async function sendQuestion(
     }));
 
     const AbortControllerCtor = getAbortController();
-    currentAbortController = AbortControllerCtor ? new AbortControllerCtor() : null;
+    currentAbortController = AbortControllerCtor
+      ? new AbortControllerCtor()
+      : null;
     let refreshQueued = false;
     const queueRefresh = () => {
       if (refreshQueued) return;
@@ -857,16 +817,14 @@ function refreshChat(body: Element, item?: Zotero.Item | null) {
       if (!msg.text) {
         bubble.innerHTML =
           '<div class="llm-typing"><span class="llm-typing-dot"></span><span class="llm-typing-dot"></span><span class="llm-typing-dot"></span></div>';
-      } else if (msg.streaming) {
-        bubble.classList.add("streaming");
-        bubble.textContent = sanitizeText(msg.text);
       } else {
+        const safeText = sanitizeText(msg.text);
+        if (msg.streaming) bubble.classList.add("streaming");
         try {
-          const safeText = sanitizeText(msg.text);
           bubble.innerHTML = renderMarkdown(safeText);
         } catch (err) {
           ztoolkit.log("LLM render error:", err);
-          bubble.textContent = sanitizeText(msg.text);
+          bubble.textContent = safeText;
         }
       }
     }

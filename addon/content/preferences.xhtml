@@ -1,6 +1,10 @@
 <vbox
   id="__addonRef__-prefs"
-  onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window: this.ownerDocument.defaultView })"
+  onload="
+    Zotero.__addonInstance__.hooks.onPrefsEvent('load', {
+      window: this.ownerDocument.defaultView,
+    })
+  "
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
 >
@@ -8,7 +12,6 @@
     <html:link rel="localization" href="__addonRef__-preferences.ftl" />
   </linkset>
   <groupbox>
-
     <html:div
       style="display: flex; flex-direction: column; gap: 16px; padding: 10px"
     >

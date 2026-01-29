@@ -1,10 +1,7 @@
 # Zotero-LLM: Your Right-Hand Side AI Research Assistant
 
-
-
 [![zotero target version](https://img.shields.io/badge/Zotero-8-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
-
 
 ![image](./assets/_neuron.png)
 
@@ -12,8 +9,8 @@
 
 ![image](./assets/demo.png)
 
-
 Key Features
+
 - 🎨 Simple and elegant interface: Keep your attention on the paper rather than the tool.
 
 - 🔑 Bring Your Own Key (BYOK): Connect directly to your preferred LLM provider. You pay only for what you use, with no middleman subscription fees.
@@ -21,7 +18,6 @@ Key Features
 - 💬 Context-Aware Chat: Have a natural conversation with your PDF. The model has context of the paper currently open in your reader.
 
 - ⚡ Quick-Action Presets: Use built-in prompts to instantly generate:
-
   - Summaries
 
   - Key Points (bulleted lists)
@@ -39,14 +35,17 @@ Key Features
 ### Installation
 
 #### Step 1: Download the latest `.xpi` release
+
 Download the latest `.xpi` release from the [Releases Page](https://github.com/yilewang/zotero-llm/releases).
 
 Open `Zotero` and go to `Tools -> Add-ons`.
 
 #### Step 2: Install the `.xpi` file
+
 Click the gear icon and select `Install Add-on From File`
 
 #### Step 3: Restart `Zotero`
+
 Select the `.xpi` file and restart `Zotero` to complete the installation.
 
 ### Configuration
@@ -73,11 +72,11 @@ Type a question in the chat box, such as "What is the main conclusion of this pa
 
 A: Yes, absolutely free. You only pay for API calls, if you choose to use a paid API provider. If you think this tool is helpful, please consider supporting me with a star on GitHub or [buy me a coffee](https://buymeacoffee.com/yat.lok) .
 
-> Q: Does this work with local models? 
+> Q: Does this work with local models?
 
 A: Yes! You can point the plugin to a local endpoint (like Ollama) to run models entirely offline for maximum privacy.
 
-> Q: Is my data used to train models? 
+> Q: Is my data used to train models?
 
 A: No. Since you use your own API key, your data privacy is governed by the terms of the API provider you choose (e.g., OpenAI Enterprise terms usually exclude training on API data).
 

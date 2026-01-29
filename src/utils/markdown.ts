@@ -1,17 +1,116 @@
 /**
- * Simple markdown to HTML renderer for chat messages
- * Supports: bold, italic, code, code blocks, links, lists, headers
+ * Markdown to HTML renderer for chat messages
+ *
+ * Supports:
+ * - Headers (h1-h4)
+ * - Bold, italic, bold+italic
+ * - Code blocks and inline code
+ * - Links
+ * - Ordered and unordered lists
+ * - Tables
+ * - Blockquotes
+ * - Horizontal rules
+ * - LaTeX math (via KaTeX)
  */
 
+import katex from "katex";
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+const KATEX_OPTIONS: katex.KatexOptions = {
+  throwOnError: false,
+  errorColor: "#cc0000",
+  strict: false,
+  trust: true,
+  macros: {
+    "\\R": "\\mathbb{R}",
+    "\\N": "\\mathbb{N}",
+    "\\Z": "\\mathbb{Z}",
+  },
+};
+
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#039;",
+};
+
+// =============================================================================
+// Utilities
+// =============================================================================
+
+/** Escape HTML special characters */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (m) => HTML_ESCAPE_MAP[m]);
+}
+
+/** Render LaTeX to HTML using KaTeX */
+function renderLatex(latex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(latex, { ...KATEX_OPTIONS, displayMode });
+  } catch {
+    // Fallback: show the raw LaTeX in a styled span
+    return `<span class="math-error" title="LaTeX error">${escapeHtml(latex)}</span>`;
+  }
+}
+
+// =============================================================================
+// Main Export
+// =============================================================================
+
+/**
+ * Convert markdown text to HTML with LaTeX math support
+ */
 export function renderMarkdown(text: string): string {
   const codeBlocks: string[] = [];
-  let source = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-    const langClass = lang ? ` class="lang-${lang}"` : "";
-    const escaped = escapeHtml(code.trim());
-    codeBlocks.push(`<pre${langClass}><code>${escaped}</code></pre>`);
-    return `@@BLOCK${codeBlocks.length - 1}@@`;
+  const boldBlocks: string[] = [];
+  const mathBlocks: string[] = [];
+
+  // 1. Extract and protect code blocks first
+  let source = text.replace(
+    /```(\w*)\n?([\s\S]*?)```/g,
+    (_match, lang, code) => {
+      const langClass = lang ? ` class="lang-${lang}"` : "";
+      const escaped = escapeHtml(code.trim());
+      codeBlocks.push(`<pre${langClass}><code>${escaped}</code></pre>`);
+      return `@@BLOCK${codeBlocks.length - 1}@@`;
+    },
+  );
+
+  // 2. Extract and protect math expressions BEFORE any other processing
+  // This prevents markdown from corrupting LaTeX (e.g., _ for subscripts being treated as italics)
+
+  // First normalize \(...\) to $...$ and \[...\] to $$...$$
+  source = source.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
+  source = source.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
+
+  // Display math ($$...$$) - must come before inline math
+  source = source.replace(/\$\$([\s\S]*?)\$\$/g, (_match, math) => {
+    const cleanMath = math.trim();
+    // Render with KaTeX directly
+    const rendered = renderLatex(cleanMath, true);
+    mathBlocks.push(`<div class="math-display">${rendered}</div>`);
+    return `@@MATH${mathBlocks.length - 1}@@`;
   });
 
+  // Inline math ($...$)
+  source = source.replace(/\$([^$\n]+?)\$/g, (_match, inner) => {
+    const trimmed = inner.trim();
+    // Skip if it looks like currency ($5, $100)
+    if (!trimmed || /^\d+([.,]\d+)?$/.test(trimmed)) {
+      return `$${inner}$`;
+    }
+    // Render with KaTeX directly
+    const rendered = renderLatex(trimmed, false);
+    mathBlocks.push(`<span class="math-inline">${rendered}</span>`);
+    return `@@MATH${mathBlocks.length - 1}@@`;
+  });
+
+  // 3. Now apply HTML escaping (math is already protected as placeholders)
   source = escapeHtml(source);
   source = source.replace(/(@@BLOCK\d+@@)/g, "\n$1\n");
 
@@ -23,12 +122,29 @@ export function renderMarkdown(text: string): string {
   source = source.replace(/^## (.+)$/gm, "<h3>$1</h3>");
   source = source.replace(/^# (.+)$/gm, "<h2>$1</h2>");
 
-  // Bold and italic
-  source = source.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  source = source.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  source = source.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  source = source.replace(/__(.+?)__/g, "<strong>$1</strong>");
-  source = source.replace(/_(.+?)_/g, "<em>$1</em>");
+  // Bold placeholders first to avoid overlapping tag mismatches
+  source = source.replace(/\*\*\*(.+?)\*\*\*/g, (_m, inner) => {
+    boldBlocks.push(`<strong><em>${inner}</em></strong>`);
+    return `@@BOLD${boldBlocks.length - 1}@@`;
+  });
+  source = source.replace(/\*\*(.+?)\*\*/g, (_m, inner) => {
+    boldBlocks.push(`<strong>${inner}</strong>`);
+    return `@@BOLD${boldBlocks.length - 1}@@`;
+  });
+  source = source.replace(/__(.+?)__/g, (_m, inner) => {
+    boldBlocks.push(`<strong>${inner}</strong>`);
+    return `@@BOLD${boldBlocks.length - 1}@@`;
+  });
+
+  // Italic (avoid underscores inside words)
+  source = source.replace(
+    /(^|[\s(])\*(.+?)\*(?=[\s).,!?:;]|$)/g,
+    "$1<em>$2</em>",
+  );
+  source = source.replace(
+    /(^|[\s(])_(.+?)_(?=[\s).,!?:;]|$)/g,
+    "$1<em>$2</em>",
+  );
 
   // Links
   source = source.replace(
@@ -56,7 +172,7 @@ export function renderMarkdown(text: string): string {
     }
 
     if (/^---$/.test(trimmed)) {
-      blocks.push("<hr>");
+      blocks.push("<hr/>");
       i++;
       continue;
     }
@@ -73,7 +189,7 @@ export function renderMarkdown(text: string): string {
         quoteLines.push(lines[i].trim().slice(5));
         i++;
       }
-      blocks.push(`<blockquote>${quoteLines.join("<br>")}</blockquote>`);
+      blocks.push(`<blockquote>${quoteLines.join("<br/>")}</blockquote>`);
       continue;
     }
 
@@ -90,7 +206,8 @@ export function renderMarkdown(text: string): string {
             .split("|")
             .map((cell) => cell.trim())
             .filter((cell, idx, arr) => {
-              const isEdge = (idx === 0 || idx === arr.length - 1) && cell === "";
+              const isEdge =
+                (idx === 0 || idx === arr.length - 1) && cell === "";
               return !isEdge;
             });
 
@@ -99,18 +216,14 @@ export function renderMarkdown(text: string): string {
         i += 2;
         while (i < lines.length && lines[i].trim() && isTableRow(lines[i])) {
           const cells = readCells(lines[i]);
-          rows.push(
-            `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`,
-          );
+          rows.push(`<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`);
           i++;
         }
 
         const headerHtml = `<tr>${headerCells
           .map((c) => `<th>${c}</th>`)
           .join("")}</tr>`;
-        const bodyHtml = rows.length
-          ? `<tbody>${rows.join("")}</tbody>`
-          : "";
+        const bodyHtml = rows.length ? `<tbody>${rows.join("")}</tbody>` : "";
         blocks.push(`<table><thead>${headerHtml}</thead>${bodyHtml}</table>`);
         continue;
       }
@@ -148,45 +261,25 @@ export function renderMarkdown(text: string): string {
       paraLines.push(lines[i]);
       i++;
     }
-    blocks.push(`<p>${paraLines.join("<br>")}</p>`);
+    blocks.push(`<p>${paraLines.join("<br/>")}</p>`);
   }
 
   let html = blocks.join("\n");
+
+  // Restore protected blocks in correct order
   html = html.replace(/@@BLOCK(\d+)@@/g, (_match, idx) => {
     const i = Number(idx);
     return codeBlocks[i] || "";
   });
+  html = html.replace(/@@BOLD(\d+)@@/g, (_match, idx) => {
+    const i = Number(idx);
+    return boldBlocks[i] || "";
+  });
+  // Restore math blocks last (they were extracted first, so restore last)
+  html = html.replace(/@@MATH(\d+)@@/g, (_match, idx) => {
+    const i = Number(idx);
+    return mathBlocks[i] || "";
+  });
 
   return html;
-}
-
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  };
-  return text.replace(/[&<>"']/g, (m) => map[m]);
-}
-
-/**
- * Strip markdown formatting and return plain text
- */
-export function stripMarkdown(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, "") // code blocks
-    .replace(/`([^`]+)`/g, "$1") // inline code
-    .replace(/#{1,6}\s+/g, "") // headers
-    .replace(/\*\*\*(.+?)\*\*\*/g, "$1") // bold italic
-    .replace(/\*\*(.+?)\*\*/g, "$1") // bold
-    .replace(/\*(.+?)\*/g, "$1") // italic
-    .replace(/__(.+?)__/g, "$1") // bold
-    .replace(/_(.+?)_/g, "$1") // italic
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links
-    .replace(/^[-*] /gm, "") // list items
-    .replace(/^\d+\. /gm, "") // numbered lists
-    .replace(/^> /gm, "") // blockquotes
-    .trim();
 }
