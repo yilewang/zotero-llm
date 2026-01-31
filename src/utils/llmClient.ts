@@ -34,6 +34,10 @@ interface CompletionResponse {
   }>;
 }
 
+interface EmbeddingResponse {
+  data?: Array<{ embedding?: number[] }>;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -50,7 +54,9 @@ When answering questions:
 - Provide actionable insights when possible`;
 
 const API_ENDPOINT = "/v1/chat/completions";
+const EMBEDDINGS_ENDPOINT = "/v1/embeddings";
 const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_MAX_TOKENS = 2048;
 
@@ -66,6 +72,7 @@ function getApiConfig() {
   const apiBase = (getPref("apiBase") || "").replace(/\/$/, "");
   const apiKey = getPref("apiKey") || "";
   const model = getPref("model") || DEFAULT_MODEL;
+  const embeddingModel = getPref("embeddingModel") || DEFAULT_EMBEDDING_MODEL;
   const customSystemPrompt = getPref("systemPrompt") || "";
 
   if (!apiBase) {
@@ -76,6 +83,7 @@ function getApiConfig() {
     apiBase,
     apiKey,
     model,
+    embeddingModel,
     systemPrompt: customSystemPrompt || DEFAULT_SYSTEM_PROMPT,
   };
 }
@@ -196,6 +204,32 @@ export async function callLLMStream(
   }
 
   return parseStreamResponse(res.body, onDelta);
+}
+
+/**
+ * Call embeddings API
+ */
+export async function callEmbeddings(input: string[]): Promise<number[][]> {
+  const { apiBase, apiKey, embeddingModel } = getApiConfig();
+  const payload = {
+    model: embeddingModel,
+    input,
+  };
+
+  const res = await getFetch()(`${apiBase}${EMBEDDINGS_ENDPOINT}`, {
+    method: "POST",
+    headers: buildHeaders(apiKey),
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} ${res.statusText} - ${text}`);
+  }
+
+  const data = (await res.json()) as EmbeddingResponse;
+  const embeddings = data?.data?.map((item) => item.embedding || []) || [];
+  return embeddings;
 }
 
 /**
