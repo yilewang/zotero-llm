@@ -9,6 +9,8 @@ import { config } from "../../package.json";
 
 const PANE_ID = "llm-context-panel";
 const MAX_CONTEXT_LENGTH = 8000;
+const FORCE_FULL_CONTEXT = true;
+const FULL_CONTEXT_CHAR_LIMIT = 500000;
 const CHUNK_TARGET_LENGTH = 2000;
 const CHUNK_OVERLAP = 200;
 const MAX_CONTEXT_CHUNKS = 4;
@@ -572,6 +574,19 @@ async function buildContext(
   const contextParts: string[] = [];
   if (title) contextParts.push(`Title: ${title}`);
   if (!chunks.length) return contextParts.join("\n\n");
+  if (FORCE_FULL_CONTEXT) {
+    if (!fullLength || fullLength <= FULL_CONTEXT_CHAR_LIMIT) {
+      contextParts.push("Paper Text:");
+      contextParts.push(chunks.join("\n\n"));
+      if (fullLength) {
+        contextParts.push(`\n[Full context ${fullLength} chars]`);
+      }
+      return contextParts.join("\n\n");
+    }
+    contextParts.push(
+      `\n[Full context ${fullLength} chars exceeds ${FULL_CONTEXT_CHAR_LIMIT}. Falling back to retrieval.]`,
+    );
+  }
 
   const terms = tokenizeQuery(question);
   const bm25Scores = chunkStats.map((chunk) =>
