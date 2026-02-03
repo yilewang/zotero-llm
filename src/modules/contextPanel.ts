@@ -9,6 +9,7 @@ import { config } from "../../package.json";
 
 const PANE_ID = "llm-context-panel";
 const MAX_CONTEXT_LENGTH = 8000;
+const MAX_CONTEXT_LENGTH_WITH_IMAGE = 3000;
 const FORCE_FULL_CONTEXT = true;
 const FULL_CONTEXT_CHAR_LIMIT = 500000;
 const CHUNK_TARGET_LENGTH = 2000;
@@ -44,6 +45,7 @@ interface Message {
 // =============================================================================
 
 const chatHistory = new Map<number, Message[]>();
+const selectedModelCache = new Map<number, "primary" | "secondary">();
 type PdfContext = {
   title: string;
   chunks: string[];
@@ -62,6 +64,9 @@ const shortcutTextCache = new Map<string, string>();
 let currentRequestId = 0;
 let cancelledRequestId = -1;
 let currentAbortController: AbortController | null = null;
+
+// Screenshot selection state (per item)
+const selectedImageCache = new Map<number, string>();
 
 const STOPWORDS = new Set([
   "the",
@@ -148,6 +153,381 @@ function getAbortController(): new () => AbortController {
       }
     ).AbortController
   );
+}
+
+async function optimizeImageDataUrl(
+  win: Window,
+  dataUrl: string,
+): Promise<string> {
+  const maxDimension = 1024;
+  const jpegQuality = 0.7;
+
+  try {
+    const ImageCtor = win.Image as typeof Image;
+    const img = new ImageCtor();
+    img.src = dataUrl;
+    await img.decode();
+
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    if (!width || !height) return dataUrl;
+
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+    const targetWidth = Math.max(1, Math.round(width * scale));
+    const targetHeight = Math.max(1, Math.round(height * scale));
+
+    const canvas = win.document.createElement("canvas") as HTMLCanvasElement;
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
+    if (!ctx) return dataUrl;
+
+    ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+    return canvas.toDataURL("image/jpeg", jpegQuality);
+  } catch (err) {
+    ztoolkit.log("Screenshot optimize failed:", err);
+    return dataUrl;
+  }
+}
+
+/**
+ * Screenshot selection overlay for capturing regions from the PDF reader
+ */
+async function captureScreenshotSelection(
+  win: Window,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const doc = win.document;
+
+    // Find the appropriate container (body for HTML, documentElement for XUL)
+    const container = doc.body || doc.documentElement;
+    if (!container) {
+      ztoolkit.log("Screenshot: No container found");
+      resolve(null);
+      return;
+    }
+
+    // Create overlay with inline styles using HTML namespace
+    const overlay = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    ) as HTMLDivElement;
+    overlay.id = "llm-screenshot-overlay";
+    Object.assign(overlay.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      right: "0",
+      bottom: "0",
+      width: "100vw",
+      height: "100vh",
+      zIndex: "10000",
+      cursor: "crosshair",
+      background: "rgba(0, 0, 0, 0.3)",
+    });
+
+    // Instructions
+    const instructions = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    ) as HTMLDivElement;
+    Object.assign(instructions.style, {
+      position: "fixed",
+      top: "20px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: "rgba(0, 0, 0, 0.8)",
+      color: "white",
+      padding: "12px 20px",
+      borderRadius: "8px",
+      fontSize: "14px",
+      fontWeight: "500",
+      zIndex: "10001",
+      pointerEvents: "none",
+    });
+    instructions.textContent =
+      "Click and drag to select a region, then release";
+
+    // Cancel button
+    const cancelBtn = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "button",
+    ) as HTMLButtonElement;
+    Object.assign(cancelBtn.style, {
+      position: "fixed",
+      bottom: "20px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: "#dc2626",
+      color: "white",
+      border: "none",
+      padding: "10px 24px",
+      borderRadius: "8px",
+      fontSize: "14px",
+      fontWeight: "500",
+      cursor: "pointer",
+      zIndex: "10001",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textAlign: "center",
+      lineHeight: "1",
+      minWidth: "120px",
+    });
+    cancelBtn.textContent = "Cancel (Esc)";
+
+    // Selection rectangle
+    const selection = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    ) as HTMLDivElement;
+    Object.assign(selection.style, {
+      position: "absolute",
+      border: "2px dashed #2563eb",
+      background: "rgba(37, 99, 235, 0.2)",
+      pointerEvents: "none",
+      display: "none",
+    });
+
+    overlay.append(instructions, cancelBtn, selection);
+
+    try {
+      container.appendChild(overlay);
+      ztoolkit.log("Screenshot: Overlay appended to", container.tagName);
+    } catch (err) {
+      ztoolkit.log("Screenshot: Failed to append overlay", err);
+      resolve(null);
+      return;
+    }
+
+    let startX = 0;
+    let startY = 0;
+    let isSelecting = false;
+    let isReady = false;
+    let resolved = false;
+
+    const cleanup = () => {
+      if (overlay.parentNode) {
+        overlay.remove();
+      }
+      doc.removeEventListener("keydown", onKeyDown);
+    };
+
+    const safeResolve = (value: string | null, reason: string) => {
+      if (resolved) return;
+      resolved = true;
+      ztoolkit.log("Screenshot: Resolving with", value ? "image" : "null", "-", reason);
+      cleanup();
+      resolve(value);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      ztoolkit.log("Screenshot: Key pressed:", e.key);
+      if (e.key === "Escape") {
+        safeResolve(null, "Escape pressed");
+      }
+    };
+
+    doc.addEventListener("keydown", onKeyDown);
+
+    cancelBtn.addEventListener("click", (e: MouseEvent) => {
+      ztoolkit.log("Screenshot: Cancel button clicked");
+      e.preventDefault();
+      e.stopPropagation();
+      safeResolve(null, "Cancel clicked");
+    });
+
+    // Wait before accepting mouse events to prevent button click from triggering
+    setTimeout(() => {
+      isReady = true;
+      ztoolkit.log("Screenshot: Now ready for selection");
+    }, 200);
+
+    overlay.addEventListener("mousedown", (e: MouseEvent) => {
+      ztoolkit.log("Screenshot: mousedown, isReady:", isReady, "target:", (e.target as Element)?.tagName);
+      if (!isReady) {
+        ztoolkit.log("Screenshot: Ignoring mousedown - not ready yet");
+        return;
+      }
+      if (e.target === cancelBtn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      isSelecting = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      selection.style.left = `${startX}px`;
+      selection.style.top = `${startY}px`;
+      selection.style.width = "0px";
+      selection.style.height = "0px";
+      selection.style.display = "block";
+      ztoolkit.log("Screenshot: Selection started at", startX, startY);
+    });
+
+    overlay.addEventListener("mousemove", (e: MouseEvent) => {
+      if (!isSelecting) return;
+      e.preventDefault();
+      const currentX = e.clientX;
+      const currentY = e.clientY;
+
+      const left = Math.min(startX, currentX);
+      const top = Math.min(startY, currentY);
+      const width = Math.abs(currentX - startX);
+      const height = Math.abs(currentY - startY);
+
+      selection.style.left = `${left}px`;
+      selection.style.top = `${top}px`;
+      selection.style.width = `${width}px`;
+      selection.style.height = `${height}px`;
+    });
+
+    overlay.addEventListener("mouseup", async (e: MouseEvent) => {
+      ztoolkit.log("Screenshot: mouseup, isReady:", isReady, "isSelecting:", isSelecting);
+      if (!isReady) {
+        ztoolkit.log("Screenshot: Ignoring mouseup - not ready yet");
+        return;
+      }
+      if (!isSelecting) {
+        ztoolkit.log("Screenshot: Ignoring mouseup - not selecting");
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      isSelecting = false;
+
+      const endX = e.clientX;
+      const endY = e.clientY;
+
+      const left = Math.min(startX, endX);
+      const top = Math.min(startY, endY);
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+
+      ztoolkit.log("Screenshot: Selection size:", width, "x", height);
+
+      // Minimum selection size - just reset if too small
+      if (width < 20 || height < 20) {
+        ztoolkit.log("Screenshot: Selection too small, resetting");
+        selection.style.display = "none";
+        return;
+      }
+
+      // Hide overlay before capture
+      overlay.style.display = "none";
+
+      try {
+        const dataUrl = await captureRegion(win, left, top, width, height);
+        safeResolve(dataUrl, "Capture complete");
+      } catch (err) {
+        ztoolkit.log("Screenshot capture failed:", err);
+        safeResolve(null, "Capture error");
+      }
+    });
+  });
+}
+
+/**
+ * Capture a region of the window using canvas
+ */
+async function captureRegion(
+  win: Window,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): Promise<string | null> {
+  try {
+    // Try to find the PDF canvas in the reader
+    const readerFrame = win.document.querySelector(
+      'iframe[src*="reader"]',
+    ) as HTMLIFrameElement | null;
+
+    let targetDoc = win.document;
+    if (readerFrame?.contentDocument) {
+      targetDoc = readerFrame.contentDocument;
+    }
+
+    // Look for the PDF viewer canvas
+    const pdfCanvas = targetDoc.querySelector(
+      ".pdfViewer canvas, .canvasWrapper canvas, canvas.pdfViewer",
+    ) as HTMLCanvasElement | null;
+
+    if (pdfCanvas) {
+      const canvasRect = pdfCanvas.getBoundingClientRect();
+      const relX = x - canvasRect.left;
+      const relY = y - canvasRect.top;
+
+      const scaleX = pdfCanvas.width / canvasRect.width;
+      const scaleY = pdfCanvas.height / canvasRect.height;
+
+      const srcX = Math.max(0, relX * scaleX);
+      const srcY = Math.max(0, relY * scaleY);
+      const srcWidth = Math.min(width * scaleX, pdfCanvas.width - srcX);
+      const srcHeight = Math.min(height * scaleY, pdfCanvas.height - srcY);
+
+      if (srcWidth > 0 && srcHeight > 0) {
+        const tempCanvas = win.document.createElement(
+          "canvas",
+        ) as HTMLCanvasElement;
+        tempCanvas.width = srcWidth;
+        tempCanvas.height = srcHeight;
+        const ctx = tempCanvas.getContext(
+          "2d",
+        ) as CanvasRenderingContext2D | null;
+
+        if (ctx) {
+          ctx.drawImage(
+            pdfCanvas,
+            srcX,
+            srcY,
+            srcWidth,
+            srcHeight,
+            0,
+            0,
+            srcWidth,
+            srcHeight,
+          );
+          return tempCanvas.toDataURL("image/png");
+        }
+      }
+    }
+
+    // Fallback: use Firefox's drawWindow if available
+    ztoolkit.log("No PDF canvas found, using fallback capture");
+
+    const canvas = win.document.createElement("canvas") as HTMLCanvasElement;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
+
+    if (!ctx) {
+      return null;
+    }
+
+    if ("drawWindow" in ctx) {
+      try {
+        (
+          ctx as CanvasRenderingContext2D & {
+            drawWindow: (
+              win: Window,
+              x: number,
+              y: number,
+              w: number,
+              h: number,
+              bg: string,
+            ) => void;
+          }
+        ).drawWindow(win, x, y, width, height, "white");
+        return canvas.toDataURL("image/png");
+      } catch (err) {
+        ztoolkit.log("drawWindow failed:", err);
+      }
+    }
+
+    return null;
+  } catch (err) {
+    ztoolkit.log("Capture region error:", err);
+    return null;
+  }
 }
 
 export function registerLLMStyles(win: _ZoteroTypes.MainWindow) {
@@ -273,8 +653,50 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   });
   inputSection.appendChild(inputBox);
 
+  // Image preview area (shows selected screenshot)
+  const imagePreview = createElement(doc, "div", "llm-image-preview", {
+    id: "llm-image-preview",
+  });
+  imagePreview.style.display = "none";
+
+  const previewImg = createElement(doc, "img", "llm-preview-img", {
+    id: "llm-preview-img",
+    alt: "Selected screenshot",
+  });
+
+  const removeImgBtn = createElement(doc, "button", "llm-remove-img-btn", {
+    id: "llm-remove-img",
+    textContent: "×",
+    title: "Remove image",
+  });
+
+  imagePreview.append(previewImg, removeImgBtn);
+  inputSection.appendChild(imagePreview);
+
   // Actions row
   const actionsRow = createElement(doc, "div", "llm-actions");
+
+  // Screenshot button
+  const screenshotBtn = createElement(doc, "button", "llm-screenshot-btn", {
+    id: "llm-screenshot",
+    textContent: "📷 Select Screenshot",
+    disabled: !hasItem,
+  });
+
+  const modelDropdown = createElement(doc, "div", "llm-model-dropdown", {
+    id: "llm-model-dropdown",
+  });
+  const modelBtn = createElement(doc, "button", "llm-model-btn", {
+    id: "llm-model-toggle",
+    textContent: "Model: ...",
+    disabled: !hasItem,
+  });
+  const modelMenu = createElement(doc, "div", "llm-model-menu", {
+    id: "llm-model-menu",
+  });
+  modelMenu.style.display = "none";
+  modelDropdown.append(modelBtn, modelMenu);
+
   const sendBtn = createElement(doc, "button", "llm-send-btn", {
     id: "llm-send",
     textContent: "Send",
@@ -296,7 +718,13 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
     textContent: hasItem ? "Ready" : "Select an item or open a PDF",
   });
 
-  actionsRow.append(sendBtn, cancelBtn, statusLine);
+  actionsRow.append(
+    screenshotBtn,
+    modelDropdown,
+    sendBtn,
+    cancelBtn,
+    statusLine,
+  );
   inputSection.appendChild(actionsRow);
   container.appendChild(inputSection);
   body.appendChild(container);
@@ -518,17 +946,23 @@ function normalizeScores(scores: number[]): number[] {
   return scores.map((s) => (s - min) / (max - min));
 }
 
-async function embedTexts(texts: string[]): Promise<number[][]> {
+async function embedTexts(
+  texts: string[],
+  overrides?: { apiBase?: string; apiKey?: string },
+): Promise<number[][]> {
   const all: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBEDDING_BATCH_SIZE) {
     const batch = texts.slice(i, i + EMBEDDING_BATCH_SIZE);
-    const batchEmbeddings = await callEmbeddings(batch);
+    const batchEmbeddings = await callEmbeddings(batch, overrides);
     all.push(...batchEmbeddings);
   }
   return all;
 }
 
-async function ensureEmbeddings(pdfContext: PdfContext): Promise<boolean> {
+async function ensureEmbeddings(
+  pdfContext: PdfContext,
+  overrides?: { apiBase?: string; apiKey?: string },
+): Promise<boolean> {
   if (pdfContext.embeddingFailed) return false;
   if (pdfContext.embeddings && pdfContext.embeddings.length) {
     return pdfContext.embeddings.length === pdfContext.chunks.length;
@@ -545,7 +979,7 @@ async function ensureEmbeddings(pdfContext: PdfContext): Promise<boolean> {
 
   pdfContext.embeddingPromise = (async () => {
     try {
-      const embeddings = await embedTexts(pdfContext.chunks);
+      const embeddings = await embedTexts(pdfContext.chunks, overrides);
       return embeddings;
     } catch (err) {
       ztoolkit.log("Embedding generation failed:", err);
@@ -566,6 +1000,8 @@ async function ensureEmbeddings(pdfContext: PdfContext): Promise<boolean> {
 async function buildContext(
   pdfContext: PdfContext | undefined,
   question: string,
+  hasImage: boolean,
+  apiOverrides?: { apiBase?: string; apiKey?: string },
 ): Promise<string> {
   if (!pdfContext) return "";
   const { title, chunks, chunkStats, docFreq, avgChunkLength, fullLength } =
@@ -573,7 +1009,7 @@ async function buildContext(
   const contextParts: string[] = [];
   if (title) contextParts.push(`Title: ${title}`);
   if (!chunks.length) return contextParts.join("\n\n");
-  if (FORCE_FULL_CONTEXT) {
+  if (FORCE_FULL_CONTEXT && !hasImage) {
     if (!fullLength || fullLength <= FULL_CONTEXT_CHAR_LIMIT) {
       contextParts.push("Paper Text:");
       contextParts.push(chunks.join("\n\n"));
@@ -593,10 +1029,11 @@ async function buildContext(
   );
 
   let embeddingScores: number[] | null = null;
-  const embeddingsReady = await ensureEmbeddings(pdfContext);
+  const embeddingsReady = await ensureEmbeddings(pdfContext, apiOverrides);
   if (embeddingsReady && pdfContext.embeddings) {
     try {
-      const queryEmbedding = (await callEmbeddings([question]))[0] || [];
+      const queryEmbedding =
+        (await callEmbeddings([question], apiOverrides))[0] || [];
       if (queryEmbedding.length) {
         embeddingScores = pdfContext.embeddings.map((vec) =>
           cosineSimilarity(queryEmbedding, vec),
@@ -651,7 +1088,7 @@ async function buildContext(
   }
 
   const totalChunks = chunks.length;
-  let remaining = MAX_CONTEXT_LENGTH;
+  let remaining = hasImage ? MAX_CONTEXT_LENGTH_WITH_IMAGE : MAX_CONTEXT_LENGTH;
   if (title) remaining -= `Title: ${title}`.length + 2;
 
   const excerpts: string[] = [];
@@ -730,6 +1167,43 @@ function sanitizeText(text: string) {
     out += text[i];
   }
   return out;
+}
+
+function getStringPref(key: string): string {
+  const value = Zotero.Prefs.get(`${config.prefsPrefix}.${key}`, true);
+  return typeof value === "string" ? value : "";
+}
+
+function getApiProfiles(): {
+  primary: { apiBase: string; apiKey: string; model: string };
+  secondary: { apiBase: string; apiKey: string; model: string };
+} {
+  const primary = {
+    apiBase:
+      getStringPref("apiBasePrimary") || getStringPref("apiBase") || "",
+    apiKey: getStringPref("apiKeyPrimary") || getStringPref("apiKey") || "",
+    model:
+      getStringPref("modelPrimary") ||
+      getStringPref("model") ||
+      "gpt-4o-mini",
+  };
+  const secondary = {
+    apiBase: getStringPref("apiBaseSecondary") || "",
+    apiKey: getStringPref("apiKeySecondary") || "",
+    model: getStringPref("modelSecondary") || "",
+  };
+  return {
+    primary: {
+      apiBase: primary.apiBase.trim(),
+      apiKey: primary.apiKey.trim(),
+      model: primary.model.trim(),
+    },
+    secondary: {
+      apiBase: secondary.apiBase.trim(),
+      apiKey: secondary.apiKey.trim(),
+      model: secondary.model.trim(),
+    },
+  };
 }
 
 /** Get/set JSON preferences with error handling */
@@ -985,19 +1459,144 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   const cancelBtn = body.querySelector(
     "#llm-cancel",
   ) as HTMLButtonElement | null;
+  const modelBtn = body.querySelector(
+    "#llm-model-toggle",
+  ) as HTMLButtonElement | null;
+  const modelMenu = body.querySelector(
+    "#llm-model-menu",
+  ) as HTMLDivElement | null;
   const clearBtn = body.querySelector("#llm-clear") as HTMLButtonElement | null;
+  const screenshotBtn = body.querySelector(
+    "#llm-screenshot",
+  ) as HTMLButtonElement | null;
+  const imagePreview = body.querySelector(
+    "#llm-image-preview",
+  ) as HTMLDivElement | null;
+  const previewImg = body.querySelector(
+    "#llm-preview-img",
+  ) as HTMLImageElement | null;
+  const removeImgBtn = body.querySelector(
+    "#llm-remove-img",
+  ) as HTMLButtonElement | null;
 
   if (!inputBox || !sendBtn) {
     ztoolkit.log("LLM: Could not find input or send button");
     return;
   }
 
+  // Helper to update image preview UI
+  const updateImagePreview = () => {
+    if (!item || !imagePreview || !previewImg || !screenshotBtn) return;
+    const selectedImage = selectedImageCache.get(item.id);
+    if (selectedImage) {
+      previewImg.src = selectedImage;
+      imagePreview.style.display = "flex";
+      screenshotBtn.disabled = true;
+      screenshotBtn.textContent = "📷 Screenshot Selected";
+    } else {
+      imagePreview.style.display = "none";
+      previewImg.src = "";
+      screenshotBtn.disabled = false;
+      screenshotBtn.textContent = "📷 Select Screenshot";
+    }
+  };
+
+  const updateModelButton = () => {
+    if (!item || !modelBtn) return;
+    const { primary, secondary } = getApiProfiles();
+    const hasSecondary = Boolean(secondary.model);
+    let selected = selectedModelCache.get(item.id) || "primary";
+    if (!hasSecondary) {
+      selected = "primary";
+      selectedModelCache.set(item.id, selected);
+    }
+    const name =
+      selected === "secondary" && hasSecondary
+        ? secondary.model
+        : primary.model;
+    modelBtn.textContent = `${name || primary.model || "default"}`;
+    modelBtn.disabled = !item;
+    modelBtn.title = hasSecondary
+      ? "Click to choose a model"
+      : "Only Profile A is configured";
+  };
+
+  const rebuildModelMenu = () => {
+    if (!item || !modelMenu) return;
+    const { primary, secondary } = getApiProfiles();
+    const selected = selectedModelCache.get(item.id) || "primary";
+    const entries: Array<{
+      key: "primary" | "secondary";
+      label: string;
+      model: string;
+    }> = [];
+    if (selected !== "primary") {
+      entries.push({ key: "primary", label: "Profile A", model: primary.model });
+    }
+    if (secondary.model && selected !== "secondary") {
+      entries.push({
+        key: "secondary",
+        label: "Profile B",
+        model: secondary.model,
+      });
+    }
+
+    modelMenu.innerHTML = "";
+    for (const entry of entries) {
+      const option = createElement(
+        (body.ownerDocument as Document),
+        "button",
+        "llm-model-option",
+        {
+          type: "button",
+          textContent: entry.model || "default",
+        },
+      );
+      option.addEventListener("click", (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!item) return;
+        selectedModelCache.set(item.id, entry.key);
+        modelMenu.style.display = "none";
+        updateModelButton();
+      });
+      modelMenu.appendChild(option);
+    }
+  };
+
+  // Initialize image preview state
+  updateImagePreview();
+  updateModelButton();
+
+  const getSelectedProfile = () => {
+    if (!item) return null;
+    const { primary, secondary } = getApiProfiles();
+    const selected = selectedModelCache.get(item.id) || "primary";
+    if (selected === "secondary" && secondary.model) {
+      return { key: "secondary" as const, ...secondary };
+    }
+    return { key: "primary" as const, ...primary };
+  };
+
   const doSend = async () => {
     if (!item) return;
     const text = inputBox.value.trim();
     if (!text) return;
     inputBox.value = "";
-    await sendQuestion(body, item, text);
+    const image = selectedImageCache.get(item.id);
+    // Clear the selected image after sending
+    selectedImageCache.delete(item.id);
+    updateImagePreview();
+    const selectedProfile = getSelectedProfile();
+    await sendQuestion(
+      body,
+      item,
+      text,
+      image,
+      selectedProfile?.model,
+      selectedProfile?.apiBase,
+      selectedProfile?.apiKey,
+    );
   };
 
   // Send button - use addEventListener
@@ -1016,6 +1615,123 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       doSend();
     }
   });
+
+  // Screenshot button
+  if (screenshotBtn) {
+    screenshotBtn.addEventListener("click", async (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!item) return;
+
+      // Get the main Zotero window
+      // Try multiple methods to find the correct window
+      let mainWindow: Window | null = null;
+
+      // Method 1: Try Zotero.getMainWindow()
+      mainWindow = Zotero.getMainWindow();
+      ztoolkit.log("Screenshot: Zotero.getMainWindow() =", mainWindow);
+
+      // Method 2: If that doesn't work, try getting top window from our document
+      if (!mainWindow) {
+        const panelWin = body.ownerDocument?.defaultView;
+        mainWindow = panelWin?.top || panelWin || null;
+        ztoolkit.log("Screenshot: Using panel's top window");
+      }
+
+      if (!mainWindow) {
+        ztoolkit.log("Screenshot: No window found");
+        return;
+      }
+
+      ztoolkit.log("Screenshot: Using window, body exists:", !!mainWindow.document.body);
+      ztoolkit.log("Screenshot: documentElement exists:", !!mainWindow.document.documentElement);
+
+      const status = body.querySelector("#llm-status") as HTMLElement | null;
+      if (status) setStatus(status, "Select a region...", "sending");
+
+      try {
+        ztoolkit.log("Screenshot: Starting capture selection...");
+        const dataUrl = await captureScreenshotSelection(mainWindow);
+        ztoolkit.log("Screenshot: Capture returned:", dataUrl ? "image data" : "null");
+        if (dataUrl) {
+          const optimized = await optimizeImageDataUrl(mainWindow, dataUrl);
+          selectedImageCache.set(item.id, optimized);
+          updateImagePreview();
+          if (status) setStatus(status, "Screenshot captured", "ready");
+        } else {
+          if (status) setStatus(status, "Selection cancelled", "ready");
+        }
+      } catch (err) {
+        ztoolkit.log("Screenshot selection error:", err);
+        if (status) setStatus(status, "Screenshot failed", "error");
+      }
+    });
+  }
+
+  const openModelMenu = () => {
+    if (!modelMenu || !modelBtn) return;
+    rebuildModelMenu();
+    const rect = modelBtn.getBoundingClientRect();
+    modelMenu.style.position = "fixed";
+    modelMenu.style.top = `${rect.bottom + 6}px`;
+    modelMenu.style.left = `${rect.left}px`;
+    modelMenu.style.display = "grid";
+    modelMenu.classList.add("llm-model-menu-open");
+  };
+
+  const closeModelMenu = () => {
+    if (!modelMenu) return;
+    modelMenu.classList.remove("llm-model-menu-open");
+    modelMenu.style.display = "none";
+  };
+
+  if (modelBtn) {
+    modelBtn.addEventListener("click", (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!item || !modelMenu) return;
+      if (modelMenu.style.display === "none") {
+        openModelMenu();
+      } else {
+        closeModelMenu();
+      }
+    });
+  }
+
+  const doc = body.ownerDocument;
+  if (
+    doc &&
+    !(doc as unknown as { __llmModelMenuDismiss?: boolean })
+      .__llmModelMenuDismiss
+  ) {
+    doc.addEventListener("click", (e: Event) => {
+      const menu = doc.querySelector(
+        "#llm-model-menu",
+      ) as HTMLDivElement | null;
+      const button = doc.querySelector(
+        "#llm-model-toggle",
+      ) as HTMLButtonElement | null;
+      if (!menu || menu.style.display === "none") return;
+      const target = e.target as Node | null;
+      if (target && (menu.contains(target) || button?.contains(target))) return;
+      closeModelMenu();
+    });
+    (doc as unknown as { __llmModelMenuDismiss?: boolean }).__llmModelMenuDismiss =
+      true;
+  }
+
+  // Remove image button
+  if (removeImgBtn) {
+    removeImgBtn.addEventListener("click", (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!item) return;
+      selectedImageCache.delete(item.id);
+      updateImagePreview();
+      const status = body.querySelector("#llm-status") as HTMLElement | null;
+      if (status) setStatus(status, "Image removed", "ready");
+    });
+  }
 
   // Cancel button
   if (cancelBtn) {
@@ -1045,6 +1761,8 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       e.stopPropagation();
       if (item) {
         chatHistory.delete(item.id);
+        selectedImageCache.delete(item.id);
+        updateImagePreview();
         refreshChat(body, item);
         const status = body.querySelector("#llm-status") as HTMLElement | null;
         if (status) setStatus(status, "Cleared", "ready");
@@ -1057,6 +1775,10 @@ async function sendQuestion(
   body: Element,
   item: Zotero.Item,
   question: string,
+  image?: string,
+  model?: string,
+  apiBase?: string,
+  apiKey?: string,
 ) {
   const inputBox = body.querySelector(
     "#llm-input",
@@ -1076,16 +1798,18 @@ async function sendQuestion(
   if (cancelBtn) cancelBtn.style.display = "";
   if (inputBox) inputBox.disabled = true;
   if (status) {
-    setStatus(status, "Thinking...", "sending");
+    const statusText = image ? "Analyzing image..." : "Thinking...";
+    setStatus(status, statusText, "sending");
   }
 
-  // Add user message
+  // Add user message (include indicator if image was attached)
   if (!chatHistory.has(item.id)) {
     chatHistory.set(item.id, []);
   }
   const history = chatHistory.get(item.id)!;
   const historyForLLM = history.slice(-MAX_HISTORY_MESSAGES);
-  history.push({ role: "user", text: question, timestamp: Date.now() });
+  const userMessageText = image ? `${question}\n[📷 Image attached]` : question;
+  history.push({ role: "user", text: userMessageText, timestamp: Date.now() });
   const assistantMessage: Message = {
     role: "assistant",
     text: "",
@@ -1099,7 +1823,12 @@ async function sendQuestion(
   refreshChat(body, item);
 
   try {
-    const pdfContext = await buildContext(pdfTextCache.get(item.id), question);
+    const pdfContext = await buildContext(
+      pdfTextCache.get(item.id),
+      question,
+      Boolean(image),
+      { apiBase, apiKey },
+    );
     const llmHistory: ChatMessage[] = historyForLLM.map((msg) => ({
       role: msg.role,
       content: msg.text,
@@ -1125,6 +1854,10 @@ async function sendQuestion(
         context: pdfContext,
         history: llmHistory,
         signal: currentAbortController?.signal,
+        image: image,
+        model: model,
+        apiBase: apiBase,
+        apiKey: apiKey,
       },
       (delta) => {
         assistantMessage.text += sanitizeText(delta);

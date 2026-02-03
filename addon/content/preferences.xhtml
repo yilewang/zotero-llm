@@ -13,82 +13,222 @@
   </linkset>
   <groupbox>
     <html:div
-      style="display: flex; flex-direction: column; gap: 16px; padding: 10px"
+      style="display: flex; flex-direction: column; gap: 18px; padding: 10px"
     >
-      <html:div style="display: flex; flex-direction: column; gap: 4px">
-        <html:label
-          for="__addonRef__-api-base"
-          style="font-weight: 600; font-size: 13px"
+      <html:div style="display: flex; flex-direction: column; gap: 10px">
+        <html:div style="font-weight: 700; font-size: 13px">Model A</html:div>
+
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-api-base-primary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            API URL
+          </html:label>
+          <html:input
+            id="__addonRef__-api-base-primary"
+            type="text"
+            placeholder="https://api.openai.com"
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            Full API URL (e.g., https://api.openai.com/v1/chat/completions)
+          </html:span>
+        </html:div>
+
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-api-key-primary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            API Key / Secret Key
+          </html:label>
+          <html:input
+            id="__addonRef__-api-key-primary"
+            type="password"
+            placeholder="sk-..."
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            Your API key for authentication
+          </html:span>
+        </html:div>
+
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-model-primary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            Model Name
+          </html:label>
+          <html:input
+            id="__addonRef__-model-primary"
+            type="text"
+            placeholder="gpt-4o-mini"
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            The model to use for Model A
+          </html:span>
+        </html:div>
+
+        <html:div
+          style="display: flex; align-items: center; gap: 12px; margin-top: 4px"
         >
-          API Base URL
-        </html:label>
-        <html:input
-          id="__addonRef__-api-base"
-          type="text"
-          placeholder="https://api.openai.com"
-          style="
-            width: 100%;
-            padding: 8px 12px;
-            font-size: 13px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            box-sizing: border-box;
-          "
-        />
-        <html:span style="font-size: 11px; color: #666">
-          The base URL for your OpenAI-compatible API (e.g.,
-          https://api.openai.com)
-        </html:span>
+          <html:button
+            id="__addonRef__-test-button-primary"
+            type="button"
+            style="
+              padding: 8px 20px;
+              font-size: 13px;
+              font-weight: 600;
+              background: #2563eb;
+              color: white;
+              border: none;
+              border-radius: 6px;
+              cursor: pointer;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
+            "
+          >
+            Test Connection
+          </html:button>
+          <html:span
+            id="__addonRef__-test-status-primary"
+            style="font-size: 13px"
+          ></html:span>
+        </html:div>
       </html:div>
 
-      <html:div style="display: flex; flex-direction: column; gap: 4px">
-        <html:label
-          for="__addonRef__-api-key"
-          style="font-weight: 600; font-size: 13px"
-        >
-          API Key / Secret Key
-        </html:label>
-        <html:input
-          id="__addonRef__-api-key"
-          type="password"
-          placeholder="sk-..."
-          style="
-            width: 100%;
-            padding: 8px 12px;
-            font-size: 13px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            box-sizing: border-box;
-          "
-        />
-        <html:span style="font-size: 11px; color: #666">
-          Your API key for authentication
-        </html:span>
-      </html:div>
+      <html:div style="display: flex; flex-direction: column; gap: 10px">
+        <html:div style="font-weight: 700; font-size: 13px">Model B</html:div>
 
-      <html:div style="display: flex; flex-direction: column; gap: 4px">
-        <html:label
-          for="__addonRef__-model"
-          style="font-weight: 600; font-size: 13px"
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-api-base-secondary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            API URL
+          </html:label>
+          <html:input
+            id="__addonRef__-api-base-secondary"
+            type="text"
+            placeholder="https://api.openai.com"
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            Full API URL (e.g., https://api.openai.com/v1/chat/completions)
+          </html:span>
+        </html:div>
+
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-api-key-secondary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            API Key / Secret Key
+          </html:label>
+          <html:input
+            id="__addonRef__-api-key-secondary"
+            type="password"
+            placeholder="sk-..."
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            Your API key for authentication
+          </html:span>
+        </html:div>
+
+        <html:div style="display: flex; flex-direction: column; gap: 4px">
+          <html:label
+            for="__addonRef__-model-secondary"
+            style="font-weight: 600; font-size: 13px"
+          >
+            Model Name
+          </html:label>
+          <html:input
+            id="__addonRef__-model-secondary"
+            type="text"
+            placeholder="gpt-4o"
+            style="
+              width: 100%;
+              padding: 8px 12px;
+              font-size: 13px;
+              border: 1px solid #ccc;
+              border-radius: 6px;
+              box-sizing: border-box;
+            "
+          />
+          <html:span style="font-size: 11px; color: #666">
+            The model to use for Model B
+          </html:span>
+        </html:div>
+
+        <html:div
+          style="display: flex; align-items: center; gap: 12px; margin-top: 4px"
         >
-          Model Name
-        </html:label>
-        <html:input
-          id="__addonRef__-model"
-          type="text"
-          placeholder="gpt-4o-mini"
-          style="
-            width: 100%;
-            padding: 8px 12px;
-            font-size: 13px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            box-sizing: border-box;
-          "
-        />
-        <html:span style="font-size: 11px; color: #666">
-          The model to use (e.g., gpt-4o-mini, gpt-4, claude-3-sonnet)
-        </html:span>
+          <html:button
+            id="__addonRef__-test-button-secondary"
+            type="button"
+            style="
+              padding: 8px 20px;
+              font-size: 13px;
+              font-weight: 600;
+              background: #2563eb;
+              color: white;
+              border: none;
+              border-radius: 6px;
+              cursor: pointer;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
+            "
+          >
+            Test Connection
+          </html:button>
+          <html:span
+            id="__addonRef__-test-status-secondary"
+            style="font-size: 13px"
+          ></html:span>
+        </html:div>
       </html:div>
 
       <html:div style="display: flex; flex-direction: column; gap: 4px">
@@ -115,35 +255,6 @@
         <html:span style="font-size: 11px; color: #666">
           Override the default system prompt (leave empty to use default)
         </html:span>
-      </html:div>
-
-      <html:div
-        style="display: flex; align-items: center; gap: 12px; margin-top: 8px"
-      >
-        <html:button
-          id="__addonRef__-test-button"
-          type="button"
-          style="
-            padding: 8px 20px;
-            font-size: 13px;
-            font-weight: 600;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-          "
-        >
-          Test Connection
-        </html:button>
-        <html:span
-          id="__addonRef__-test-status"
-          style="font-size: 13px"
-        ></html:span>
       </html:div>
     </html:div>
   </groupbox>

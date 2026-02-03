@@ -10,9 +10,27 @@ import { config } from "../../package.json";
 // Types
 // =============================================================================
 
+/** Image content for vision-capable models */
+export type ImageContent = {
+  type: "image_url";
+  image_url: {
+    url: string;
+    detail?: "low" | "high" | "auto";
+  };
+};
+
+/** Text content */
+export type TextContent = {
+  type: "text";
+  text: string;
+};
+
+/** Message content can be string or array of content parts (for vision) */
+export type MessageContent = string | (TextContent | ImageContent)[];
+
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
-  content: string;
+  content: MessageContent;
 };
 
 export type ChatParams = {
@@ -20,6 +38,14 @@ export type ChatParams = {
   context?: string;
   history?: ChatMessage[];
   signal?: AbortSignal;
+  /** Base64 data URL of an image to include with the prompt */
+  image?: string;
+  /** Override model for this request */
+  model?: string;
+  /** Override API base for this request */
+  apiBase?: string;
+  /** Override API key for this request */
+  apiKey?: string;
 };
 
 interface StreamChoice {
@@ -68,15 +94,37 @@ const prefKey = (key: string) => `${config.prefsPrefix}.${key}`;
 const getPref = (key: string) => Zotero.Prefs.get(prefKey(key), true) as string;
 
 /** Get configured API settings */
-function getApiConfig() {
-  const apiBase = (getPref("apiBase") || "").replace(/\/$/, "");
-  const apiKey = getPref("apiKey") || "";
-  const model = getPref("model") || DEFAULT_MODEL;
+function resolveEndpoint(baseOrUrl: string, path: string): string {
+  const cleaned = baseOrUrl.replace(/\/$/, "");
+  if (!cleaned) return "";
+  if (/\/v1\/.+/.test(cleaned)) {
+    if (cleaned.includes("/chat/completions") && path === EMBEDDINGS_ENDPOINT) {
+      return cleaned.replace(/\/chat\/completions$/, "/embeddings");
+    }
+    if (cleaned.endsWith(path)) return cleaned;
+    return cleaned;
+  }
+  return `${cleaned}${path}`;
+}
+
+function getApiConfig(overrides?: {
+  apiBase?: string;
+  apiKey?: string;
+  model?: string;
+}) {
+  const prefApiBase =
+    getPref("apiBasePrimary") || getPref("apiBase") || "";
+  const apiBase = (overrides?.apiBase || prefApiBase).replace(/\/$/, "");
+  const apiKey =
+    overrides?.apiKey || getPref("apiKeyPrimary") || getPref("apiKey") || "";
+  const modelPrimary =
+    getPref("modelPrimary") || getPref("model") || DEFAULT_MODEL;
+  const model = overrides?.model || modelPrimary;
   const embeddingModel = getPref("embeddingModel") || DEFAULT_EMBEDDING_MODEL;
   const customSystemPrompt = getPref("systemPrompt") || "";
 
   if (!apiBase) {
-    throw new Error("API base URL is missing in preferences");
+    throw new Error("API URL is missing in preferences");
   }
 
   return {
@@ -106,10 +154,28 @@ function buildMessages(
     messages.push(...params.history);
   }
 
-  messages.push({
-    role: "user",
-    content: params.prompt,
-  });
+  // Build user message - with image if provided (vision API format)
+  if (params.image) {
+    const contentParts: (TextContent | ImageContent)[] = [
+      { type: "text", text: params.prompt },
+      {
+        type: "image_url",
+        image_url: {
+          url: params.image,
+          detail: "high",
+        },
+      },
+    ];
+    messages.push({
+      role: "user",
+      content: contentParts,
+    });
+  } else {
+    messages.push({
+      role: "user",
+      content: params.prompt,
+    });
+  }
 
   return messages;
 }
@@ -138,7 +204,11 @@ function getFetch(): typeof fetch {
  * Call LLM API (non-streaming)
  */
 export async function callLLM(params: ChatParams): Promise<string> {
-  const { apiBase, apiKey, model, systemPrompt } = getApiConfig();
+  const { apiBase, apiKey, model, systemPrompt } = getApiConfig({
+    apiBase: params.apiBase,
+    apiKey: params.apiKey,
+    model: params.model,
+  });
   const messages = buildMessages(params, systemPrompt);
 
   const payload = {
@@ -148,7 +218,8 @@ export async function callLLM(params: ChatParams): Promise<string> {
     max_tokens: DEFAULT_MAX_TOKENS,
   };
 
-  const res = await getFetch()(`${apiBase}${API_ENDPOINT}`, {
+  const url = resolveEndpoint(apiBase, API_ENDPOINT);
+  const res = await getFetch()(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
     body: JSON.stringify(payload),
@@ -175,7 +246,11 @@ export async function callLLMStream(
   params: ChatParams,
   onDelta: (delta: string) => void,
 ): Promise<string> {
-  const { apiBase, apiKey, model, systemPrompt } = getApiConfig();
+  const { apiBase, apiKey, model, systemPrompt } = getApiConfig({
+    apiBase: params.apiBase,
+    apiKey: params.apiKey,
+    model: params.model,
+  });
   const messages = buildMessages(params, systemPrompt);
 
   const payload = {
@@ -186,7 +261,8 @@ export async function callLLMStream(
     stream: true,
   };
 
-  const res = await getFetch()(`${apiBase}${API_ENDPOINT}`, {
+  const url = resolveEndpoint(apiBase, API_ENDPOINT);
+  const res = await getFetch()(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
     body: JSON.stringify(payload),
@@ -209,14 +285,21 @@ export async function callLLMStream(
 /**
  * Call embeddings API
  */
-export async function callEmbeddings(input: string[]): Promise<number[][]> {
-  const { apiBase, apiKey, embeddingModel } = getApiConfig();
+export async function callEmbeddings(
+  input: string[],
+  overrides?: { apiBase?: string; apiKey?: string },
+): Promise<number[][]> {
+  const { apiBase, apiKey, embeddingModel } = getApiConfig({
+    apiBase: overrides?.apiBase,
+    apiKey: overrides?.apiKey,
+  });
   const payload = {
     model: embeddingModel,
     input,
   };
 
-  const res = await getFetch()(`${apiBase}${EMBEDDINGS_ENDPOINT}`, {
+  const url = resolveEndpoint(apiBase, EMBEDDINGS_ENDPOINT);
+  const res = await getFetch()(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
     body: JSON.stringify(payload),
