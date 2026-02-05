@@ -148,11 +148,35 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
           headers["Authorization"] = `Bearer ${apiKey}`;
         }
 
-        const testPayload = {
-          model: modelName,
-          messages: [{ role: "user", content: "Say OK" }],
-          max_tokens: 5,
+        const usesMaxCompletionTokens = (name: string) => {
+          const value = name.toLowerCase();
+          return (
+            value.startsWith("gpt-5") ||
+            value.startsWith("o") ||
+            value.includes("reasoning")
+          );
         };
+
+        const isResponsesBase = apiBase.endsWith("/v1/responses") ||
+          apiBase.endsWith("/responses");
+
+        const tokenParam = isResponsesBase
+          ? { max_output_tokens: 16 }
+          : usesMaxCompletionTokens(modelName)
+            ? { max_completion_tokens: 5 }
+            : { max_tokens: 5 };
+
+        const testPayload = isResponsesBase
+          ? {
+              model: modelName,
+              input: [{ role: "user", content: "Say OK" }],
+              ...tokenParam,
+            }
+          : {
+              model: modelName,
+              messages: [{ role: "user", content: "Say OK" }],
+              ...tokenParam,
+            };
 
         const fetchFn = ztoolkit.getGlobal("fetch") as typeof fetch;
         const response = await fetchFn(apiBase, {
@@ -163,7 +187,7 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 100)}`);
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
 
         const data = (await response.json()) as {
@@ -171,7 +195,7 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
         };
         const reply = data?.choices?.[0]?.message?.content || "OK";
 
-        status.textContent = `Success! Model says: "${reply.slice(0, 30)}"`;
+        status.textContent = `Success! Model says: "${reply}"`;
         status.style.color = "green";
       } catch (error) {
         status.textContent = `Failed: ${(error as Error).message}`;

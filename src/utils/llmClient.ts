@@ -80,6 +80,7 @@ When answering questions:
 - Provide actionable insights when possible`;
 
 const API_ENDPOINT = "/v1/chat/completions";
+const RESPONSES_ENDPOINT = "/v1/responses";
 const EMBEDDINGS_ENDPOINT = "/v1/embeddings";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
@@ -98,14 +99,30 @@ function resolveEndpoint(baseOrUrl: string, path: string): string {
   const cleaned = baseOrUrl.replace(/\/$/, "");
   if (!cleaned) return "";
   const chatSuffix = "/chat/completions";
+  const responsesSuffix = "/responses";
   const embeddingSuffix = "/embeddings";
   const hasChat = cleaned.endsWith(chatSuffix);
+  const hasResponses = cleaned.endsWith(responsesSuffix);
   const hasEmbeddings = cleaned.endsWith(embeddingSuffix);
 
   if (hasChat) {
-    return path === EMBEDDINGS_ENDPOINT
-      ? cleaned.replace(/\/chat\/completions$/, embeddingSuffix)
-      : cleaned;
+    if (path === EMBEDDINGS_ENDPOINT) {
+      return cleaned.replace(/\/chat\/completions$/, embeddingSuffix);
+    }
+    if (path === RESPONSES_ENDPOINT) {
+      return cleaned.replace(/\/chat\/completions$/, responsesSuffix);
+    }
+    return cleaned;
+  }
+
+  if (hasResponses) {
+    if (path === EMBEDDINGS_ENDPOINT) {
+      return cleaned.replace(/\/responses$/, embeddingSuffix);
+    }
+    if (path === API_ENDPOINT) {
+      return cleaned.replace(/\/responses$/, chatSuffix);
+    }
+    return cleaned;
   }
 
   if (hasEmbeddings) {
@@ -214,6 +231,108 @@ function getFetch(): typeof fetch {
   return ztoolkit.getGlobal("fetch") as typeof fetch;
 }
 
+function isResponsesBase(baseOrUrl: string): boolean {
+  const cleaned = baseOrUrl.replace(/\/$/, "");
+  return cleaned.endsWith("/v1/responses") || cleaned.endsWith("/responses");
+}
+
+function usesMaxCompletionTokens(model: string): boolean {
+  const name = model.toLowerCase();
+  return (
+    name.startsWith("gpt-5") ||
+    name.startsWith("o") ||
+    name.includes("reasoning")
+  );
+}
+
+function buildTokenParam(model: string, maxTokens: number) {
+  return usesMaxCompletionTokens(model)
+    ? { max_completion_tokens: maxTokens }
+    : { max_tokens: maxTokens };
+}
+
+function buildResponsesTokenParam(maxTokens: number) {
+  return { max_output_tokens: maxTokens };
+}
+
+function stringifyContent(content: MessageContent): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildResponsesInput(messages: ChatMessage[]) {
+  const instructionsParts: string[] = [];
+  const input: Array<{
+    type: "message";
+    role: "user" | "assistant";
+    content:
+      | string
+      | Array<
+          | { type: "input_text"; text: string }
+          | { type: "input_image"; image_url: string; detail?: string }
+        >;
+  }> = [];
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      const text = stringifyContent(message.content);
+      if (text) instructionsParts.push(text);
+      continue;
+    }
+
+    if (typeof message.content === "string") {
+      input.push({
+        type: "message",
+        role: message.role,
+        content: message.content,
+      });
+      continue;
+    }
+
+    const contentParts = message.content.map((part) => {
+      if (part.type === "text") {
+        return { type: "input_text" as const, text: part.text };
+      }
+      return {
+        type: "input_image" as const,
+        image_url: part.image_url.url,
+        detail: part.image_url.detail,
+      };
+    });
+
+    input.push({
+      type: "message",
+      role: message.role,
+      content: contentParts,
+    });
+  }
+
+  return {
+    instructions: instructionsParts.length
+      ? instructionsParts.join("\n\n")
+      : undefined,
+    input,
+  };
+}
+
+function extractResponsesOutputText(data: {
+  output_text?: string;
+  output?: Array<{
+    content?: Array<{ type?: string; text?: string }>;
+  }>;
+}): string {
+  if (data?.output_text) return data.output_text;
+  const firstText =
+    data?.output
+      ?.flatMap((item) => item.content || [])
+      .find((content) => content.type === "output_text" && content.text)?.text ||
+    "";
+  return firstText || JSON.stringify(data);
+}
+
 // =============================================================================
 // API Functions
 // =============================================================================
@@ -228,15 +347,26 @@ export async function callLLM(params: ChatParams): Promise<string> {
     model: params.model,
   });
   const messages = buildMessages(params, systemPrompt);
+  const useResponses = isResponsesBase(apiBase);
 
-  const payload = {
-    model,
-    messages,
-    temperature: DEFAULT_TEMPERATURE,
-    max_tokens: DEFAULT_MAX_TOKENS,
-  };
+  const payload = useResponses
+    ? {
+        model,
+        ...buildResponsesInput(messages),
+        temperature: DEFAULT_TEMPERATURE,
+        ...buildResponsesTokenParam(DEFAULT_MAX_TOKENS),
+      }
+    : {
+        model,
+        messages,
+        temperature: DEFAULT_TEMPERATURE,
+        ...buildTokenParam(model, DEFAULT_MAX_TOKENS),
+      };
 
-  const url = resolveEndpoint(apiBase, API_ENDPOINT);
+  const url = resolveEndpoint(
+    apiBase,
+    useResponses ? RESPONSES_ENDPOINT : API_ENDPOINT,
+  );
   const res = await getFetch()(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
@@ -249,7 +379,13 @@ export async function callLLM(params: ChatParams): Promise<string> {
     throw new Error(`${res.status} ${res.statusText} - ${text}`);
   }
 
-  const data = (await res.json()) as CompletionResponse;
+  const data = (await res.json()) as CompletionResponse & {
+    output_text?: string;
+    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+  };
+  if (useResponses) {
+    return extractResponsesOutputText(data);
+  }
   return (
     data?.choices?.[0]?.message?.content ??
     data?.choices?.[0]?.text ??
@@ -270,16 +406,28 @@ export async function callLLMStream(
     model: params.model,
   });
   const messages = buildMessages(params, systemPrompt);
+  const useResponses = isResponsesBase(apiBase);
 
-  const payload = {
-    model,
-    messages,
-    temperature: DEFAULT_TEMPERATURE,
-    max_tokens: DEFAULT_MAX_TOKENS,
-    stream: true,
-  };
+  const payload = useResponses
+    ? {
+        model,
+        ...buildResponsesInput(messages),
+        temperature: DEFAULT_TEMPERATURE,
+        ...buildResponsesTokenParam(DEFAULT_MAX_TOKENS),
+        stream: true,
+      }
+    : {
+        model,
+        messages,
+        temperature: DEFAULT_TEMPERATURE,
+        ...buildTokenParam(model, DEFAULT_MAX_TOKENS),
+        stream: true,
+      };
 
-  const url = resolveEndpoint(apiBase, API_ENDPOINT);
+  const url = resolveEndpoint(
+    apiBase,
+    useResponses ? RESPONSES_ENDPOINT : API_ENDPOINT,
+  );
   const res = await getFetch()(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
@@ -297,7 +445,9 @@ export async function callLLMStream(
     return callLLM(params);
   }
 
-  return parseStreamResponse(res.body, onDelta);
+  return useResponses
+    ? parseResponsesStream(res.body, onDelta)
+    : parseStreamResponse(res.body, onDelta);
 }
 
 /**
@@ -374,6 +524,71 @@ async function parseStreamResponse(
           }
         } catch (err) {
           ztoolkit.log("LLM stream parse error:", err);
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return fullText;
+}
+
+async function parseResponsesStream(
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void,
+): Promise<string> {
+  const reader = body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let fullText = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+
+        try {
+          const parsed = JSON.parse(data) as {
+            type?: string;
+            delta?: string;
+            text?: string;
+            response?: {
+              output_text?: string;
+            };
+          };
+
+          if (parsed.type === "response.output_text.delta" && parsed.delta) {
+            fullText += parsed.delta;
+            onDelta(parsed.delta);
+            continue;
+          }
+
+          if (parsed.type === "response.output_text.done" && parsed.text) {
+            fullText += parsed.text;
+            onDelta(parsed.text);
+            continue;
+          }
+
+          if (parsed.type === "response.completed" && parsed.response?.output_text) {
+            if (!fullText) {
+              fullText = parsed.response.output_text;
+              onDelta(parsed.response.output_text);
+            }
+          }
+        } catch (err) {
+          ztoolkit.log("LLM responses stream parse error:", err);
         }
       }
     }
