@@ -3266,6 +3266,11 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       : "Only one model is configured";
   };
 
+  const isPrimaryPointerEvent = (e: Event): boolean => {
+    const me = e as MouseEvent;
+    return typeof me.button !== "number" || me.button === 0;
+  };
+
   const rebuildModelMenu = () => {
     if (!item || !modelMenu) return;
     const { choices } = getModelChoices();
@@ -3283,7 +3288,8 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
           textContent: entry.model || "default",
         },
       );
-      option.addEventListener("click", (e: Event) => {
+      const applyModelSelection = (e: Event) => {
+        if (!isPrimaryPointerEvent(e)) return;
         e.preventDefault();
         e.stopPropagation();
         if (!item) return;
@@ -3293,7 +3299,9 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
         selectedReasoningCache.set(item.id, "none");
         updateModelButton();
         updateReasoningButton();
-      });
+      };
+      option.addEventListener("pointerdown", applyModelSelection);
+      option.addEventListener("click", applyModelSelection);
       modelMenu.appendChild(option);
     }
   };
@@ -3372,14 +3380,17 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
         },
       );
       if (optionState.enabled) {
-        option.addEventListener("click", (e: Event) => {
+        const applyReasoningSelection = (e: Event) => {
+          if (!isPrimaryPointerEvent(e)) return;
           e.preventDefault();
           e.stopPropagation();
           if (!item) return;
           selectedReasoningCache.set(item.id, level);
           setFloatingMenuOpen(reasoningMenu, REASONING_MENU_OPEN_CLASS, false);
           updateReasoningButton();
-        });
+        };
+        option.addEventListener("pointerdown", applyReasoningSelection);
+        option.addEventListener("click", applyReasoningSelection);
       } else {
         option.disabled = true;
         option.classList.add("llm-reasoning-option-disabled");
@@ -3732,6 +3743,24 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   const closeReasoningMenu = () => {
     setFloatingMenuOpen(reasoningMenu, REASONING_MENU_OPEN_CLASS, false);
   };
+
+  if (modelMenu) {
+    modelMenu.addEventListener("pointerdown", (e: Event) => {
+      e.stopPropagation();
+    });
+    modelMenu.addEventListener("mousedown", (e: Event) => {
+      e.stopPropagation();
+    });
+  }
+
+  if (reasoningMenu) {
+    reasoningMenu.addEventListener("pointerdown", (e: Event) => {
+      e.stopPropagation();
+    });
+    reasoningMenu.addEventListener("mousedown", (e: Event) => {
+      e.stopPropagation();
+    });
+  }
 
   if (modelBtn) {
     modelBtn.addEventListener("click", (e: Event) => {
