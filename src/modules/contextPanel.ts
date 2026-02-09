@@ -104,6 +104,10 @@ type CustomShortcut = {
   label: string;
   prompt: string;
 };
+type ResolvedContextSource = {
+  contextItem: Zotero.Item | null;
+  statusText: string;
+};
 
 // =============================================================================
 // State
@@ -1620,6 +1624,96 @@ function buildQuestionWithSelectedText(
   return `Selected text from the PDF reader:\n"""\n${selectedText}\n"""\n\nUser question:\n${normalizedPrompt}`;
 }
 
+function getActiveReaderForSelectedTab(): any | null {
+  const selectedTabId = (
+    Zotero as unknown as { Tabs?: { selectedID?: string | number } }
+  ).Tabs?.selectedID;
+  if (selectedTabId === undefined || selectedTabId === null) return null;
+  return (
+    (
+      Zotero as unknown as {
+        Reader?: { getByTabID?: (id: string | number) => any };
+      }
+    ).Reader?.getByTabID?.(selectedTabId as string | number) || null
+  );
+}
+
+function getActiveTabMode(): "reader" | "library" {
+  return getActiveReaderForSelectedTab() ? "reader" : "library";
+}
+
+function isSupportedContextAttachment(
+  item: Zotero.Item | null | undefined,
+): item is Zotero.Item {
+  return Boolean(
+    item &&
+      item.isAttachment() &&
+      item.attachmentContentType === "application/pdf",
+  );
+}
+
+function findFirstSupportedChildAttachment(
+  parentItem: Zotero.Item | null | undefined,
+): Zotero.Item | null {
+  if (!parentItem || parentItem.isAttachment()) return null;
+  const attachments = parentItem.getAttachments();
+  for (const attId of attachments) {
+    const att = Zotero.Items.get(attId);
+    if (isSupportedContextAttachment(att)) {
+      return att;
+    }
+  }
+  return null;
+}
+
+function getContextItemLabel(item: Zotero.Item): string {
+  const title = sanitizeText(item.getField("title") || "").trim();
+  if (title) return title;
+  return `Attachment ${item.id}`;
+}
+
+function resolveContextSourceItem(panelItem: Zotero.Item): ResolvedContextSource {
+  if (getActiveTabMode() === "reader") {
+    const reader = getActiveReaderForSelectedTab();
+    const readerItemId = reader?._item?.id || reader?.itemID;
+    const readerItem =
+      typeof readerItemId === "number" ? Zotero.Items.get(readerItemId) : null;
+    if (isSupportedContextAttachment(readerItem)) {
+      const label = getContextItemLabel(readerItem);
+      return {
+        contextItem: readerItem,
+        statusText: `Using context: ${label} (active reader)`,
+      };
+    }
+    return {
+      contextItem: null,
+      statusText: "No usable file context found",
+    };
+  }
+
+  if (isSupportedContextAttachment(panelItem)) {
+    const label = getContextItemLabel(panelItem);
+    return {
+      contextItem: panelItem,
+      statusText: `Using context: ${label} (library child selection)`,
+    };
+  }
+
+  const fallbackItem = findFirstSupportedChildAttachment(panelItem);
+  if (fallbackItem) {
+    const label = getContextItemLabel(fallbackItem);
+    return {
+      contextItem: fallbackItem,
+      statusText: `Using context: ${label} (parent fallback)`,
+    };
+  }
+
+  return {
+    contextItem: null,
+    statusText: "No usable file context found",
+  };
+}
+
 function getItemSelectionCacheKeys(
   item: Zotero.Item | null | undefined,
 ): number[] {
@@ -1644,14 +1738,7 @@ function getActiveReaderSelectionText(
   panelDoc: Document,
   currentItem?: Zotero.Item | null,
 ): string {
-  const selectedTabId = (
-    Zotero as unknown as { Tabs?: { selectedID?: string | number } }
-  ).Tabs?.selectedID;
-  const reader = (
-    Zotero as unknown as {
-      Reader?: { getByTabID?: (id: string | number) => any };
-    }
-  ).Reader?.getByTabID?.(selectedTabId as string | number);
+  const reader = getActiveReaderForSelectedTab();
 
   const selectionFrom = (doc?: Document | null): string => {
     if (!doc) return "";
@@ -2264,11 +2351,11 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
   container.innerHTML = "";
   const overrides = getShortcutOverrides();
   const labelOverrides = getShortcutLabelOverrides();
-  let deletedIds = new Set(getDeletedShortcutIds());
-  let builtins = BUILTIN_SHORTCUT_FILES.filter(
+  const deletedIds = new Set(getDeletedShortcutIds());
+  const builtins = BUILTIN_SHORTCUT_FILES.filter(
     (shortcut) => !deletedIds.has(shortcut.id),
   );
-  let customShortcuts = getCustomShortcuts();
+  const customShortcuts = getCustomShortcuts();
 
   const availableCustomSlots = Math.max(
     0,
@@ -3944,10 +4031,7 @@ async function sendQuestion(
   if (sendBtn) sendBtn.style.display = "none";
   if (cancelBtn) cancelBtn.style.display = "";
   if (inputBox) inputBox.disabled = true;
-  if (status) {
-    const statusText = image ? "Analyzing image..." : "Thinking...";
-    setStatus(status, statusText, "sending");
-  }
+  if (status) setStatus(status, "Preparing request...", "sending");
 
   await ensureConversationLoaded(item);
   const conversationKey = getConversationKey(item);
@@ -4026,13 +4110,20 @@ async function sendQuestion(
   };
 
   try {
-    await ensurePDFTextCached(item);
-    const pdfContext = await buildContext(
-      pdfTextCache.get(item.id),
-      question,
-      Boolean(image),
-      { apiBase: effectiveApiBase, apiKey: effectiveApiKey },
-    );
+    const contextSource = resolveContextSourceItem(item);
+    if (status) setStatus(status, contextSource.statusText, "sending");
+
+    let pdfContext = "";
+    if (contextSource.contextItem) {
+      await ensurePDFTextCached(contextSource.contextItem);
+      pdfContext = await buildContext(
+        pdfTextCache.get(contextSource.contextItem.id),
+        question,
+        Boolean(image),
+        { apiBase: effectiveApiBase, apiKey: effectiveApiKey },
+      );
+    }
+
     const llmHistory: ChatMessage[] = historyForLLM.map((msg) => ({
       role: msg.role,
       content: msg.text,
@@ -4241,7 +4332,7 @@ function refreshChat(body: Element, item?: Zotero.Item | null) {
         const toggleReasoning = (e: Event) => {
           e.preventDefault();
           e.stopPropagation();
-          const next = !Boolean(msg.reasoningOpen);
+          const next = !msg.reasoningOpen;
           msg.reasoningOpen = next;
           details.open = next;
         };
