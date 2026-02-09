@@ -1,4 +1,9 @@
 import { config } from "../../package.json";
+import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  MAX_ALLOWED_TOKENS,
+} from "../utils/llmDefaults";
 
 type PrefKey =
   | "apiBase"
@@ -34,9 +39,6 @@ const getPref = (key: PrefKey): string => {
 const setPref = (key: PrefKey, value: string) =>
   Zotero.Prefs.set(pref(key), value, true);
 
-const DEFAULT_TEMPERATURE = 0.3;
-const DEFAULT_MAX_TOKENS = 2048;
-const MAX_ALLOWED_TOKENS = 65536;
 const PROFILE_CONFIGS: ProfileConfig[] = [
   {
     key: "primary",

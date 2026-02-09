@@ -1,0 +1,3 @@
+export const DEFAULT_TEMPERATURE = 0.3;
+export const DEFAULT_MAX_TOKENS = 4096;
+export const MAX_ALLOWED_TOKENS = 65536;

@@ -16,6 +16,11 @@ import {
   ReasoningLevel as LLMReasoningLevel,
 } from "../utils/llmClient";
 import { config } from "../../package.json";
+import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  MAX_ALLOWED_TOKENS,
+} from "../utils/llmDefaults";
 
 // =============================================================================
 // Constants
@@ -40,9 +45,6 @@ const FONT_SCALE_DEFAULT_PERCENT = 100;
 const FONT_SCALE_MIN_PERCENT = 80;
 const FONT_SCALE_MAX_PERCENT = 180;
 const FONT_SCALE_STEP_PERCENT = 10;
-const DEFAULT_TEMPERATURE = 0.3;
-const DEFAULT_MAX_TOKENS = 2048;
-const MAX_ALLOWED_TOKENS = 65536;
 const SELECTED_TEXT_MAX_LENGTH = 4000;
 const SELECTED_TEXT_PREVIEW_LENGTH = 240;
 const MAX_EDITABLE_SHORTCUTS = 5;

@@ -5,6 +5,11 @@
  */
 
 import { config } from "../../package.json";
+import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  MAX_ALLOWED_TOKENS,
+} from "./llmDefaults";
 
 // =============================================================================
 // Types
@@ -114,9 +119,6 @@ const RESPONSES_ENDPOINT = "/v1/responses";
 const EMBEDDINGS_ENDPOINT = "/v1/embeddings";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
-const DEFAULT_TEMPERATURE = 0.3;
-const DEFAULT_MAX_TOKENS = 2048;
-const MAX_ALLOWED_TOKENS = 65536;
 
 // =============================================================================
 // Utilities
