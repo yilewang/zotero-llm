@@ -49,7 +49,11 @@ const SELECTED_TEXT_MAX_LENGTH = 4000;
 const SELECTED_TEXT_PREVIEW_LENGTH = 240;
 const MAX_EDITABLE_SHORTCUTS = 5;
 const MAX_SELECTED_IMAGES = 5;
-const INCLUDE_SELECTED_TEXT_SHORTCUT_ID = "include-selected-text";
+const SELECT_TEXT_EXPANDED_LABEL = "Add Text";
+const SELECT_TEXT_COMPACT_LABEL = "✍🏻";
+const SCREENSHOT_EXPANDED_LABEL = "Screenshots";
+const SCREENSHOT_COMPACT_LABEL = "📷";
+const REASONING_COMPACT_LABEL = "🧩";
 const CUSTOM_SHORTCUT_ID_PREFIX = "custom-shortcut";
 
 const BUILTIN_SHORTCUT_FILES = [
@@ -1105,7 +1109,6 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   });
 
   imagePreview.append(imagePreviewMeta, previewStrip, removeImgBtn);
-  inputSection.appendChild(imagePreview);
 
   // Actions row
   const actionsRow = createElement(doc, "div", "llm-actions");
@@ -1115,10 +1118,10 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   const selectTextBtn = createElement(
     doc,
     "button",
-    "llm-action-btn llm-action-btn-secondary llm-select-text-btn",
+    "llm-shortcut-btn llm-action-btn llm-action-btn-secondary llm-select-text-btn",
     {
       id: "llm-select-text",
-      textContent: "+ Text Selection",
+      textContent: SELECT_TEXT_EXPANDED_LABEL,
       title: "Include selected reader text",
       disabled: !hasItem,
     },
@@ -1130,10 +1133,11 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   const screenshotBtn = createElement(
     doc,
     "button",
-    "llm-action-btn llm-action-btn-secondary llm-screenshot-btn",
+    "llm-shortcut-btn llm-action-btn llm-action-btn-secondary llm-screenshot-btn",
     {
       id: "llm-screenshot",
-      textContent: "Screenshot",
+      textContent: SCREENSHOT_EXPANDED_LABEL,
+      title: "Select figure screenshot",
       disabled: !hasItem,
     },
   );
@@ -1148,7 +1152,8 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
     slotId: "llm-model-dropdown",
     slotClassName: "llm-model-dropdown",
     buttonId: "llm-model-toggle",
-    buttonClassName: "llm-action-btn llm-action-btn-secondary llm-model-btn",
+    buttonClassName:
+      "llm-shortcut-btn llm-action-btn llm-action-btn-secondary llm-model-btn",
     buttonText: "Model: ...",
     menuId: "llm-model-menu",
     menuClassName: "llm-model-menu",
@@ -1164,7 +1169,7 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
     slotClassName: "llm-reasoning-dropdown",
     buttonId: "llm-reasoning-toggle",
     buttonClassName:
-      "llm-action-btn llm-action-btn-secondary llm-reasoning-btn",
+      "llm-shortcut-btn llm-action-btn llm-action-btn-secondary llm-reasoning-btn",
     buttonText: "Reasoning",
     menuId: "llm-reasoning-menu",
     menuClassName: "llm-reasoning-menu",
@@ -1174,10 +1179,10 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   const sendBtn = createElement(
     doc,
     "button",
-    "llm-action-btn llm-action-btn-primary llm-send-btn",
+    "llm-shortcut-btn llm-action-btn llm-action-btn-primary llm-send-btn",
     {
       id: "llm-send",
-      textContent: "\u2191",
+      textContent: "Send",
       title: "Send",
       disabled: !hasItem,
     },
@@ -1185,7 +1190,7 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   const cancelBtn = createElement(
     doc,
     "button",
-    "llm-action-btn llm-action-btn-danger llm-send-btn llm-cancel-btn",
+    "llm-shortcut-btn llm-action-btn llm-action-btn-danger llm-send-btn llm-cancel-btn",
     {
       id: "llm-cancel",
       textContent: "Cancel",
@@ -1208,9 +1213,10 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   );
   actionsRight.append(sendSlot);
   actionsRow.append(actionsLeft, actionsRight);
+  inputSection.appendChild(imagePreview);
   inputSection.appendChild(actionsRow);
-  inputSection.appendChild(statusLine);
   container.appendChild(inputSection);
+  container.appendChild(statusLine);
   body.appendChild(container);
 }
 
@@ -2835,7 +2841,6 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     positionShortcutMenu(event.clientX + 4, event.clientY + 4);
   };
 
-  let pendingSelectedText = "";
   for (const shortcut of editableShortcuts) {
     const btn = body.ownerDocument!.createElementNS(
       "http://www.w3.org/1999/xhtml",
@@ -2880,33 +2885,6 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     container.appendChild(btn);
   }
 
-  const includeSelectedBtn = body.ownerDocument!.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "button",
-  ) as HTMLButtonElement;
-  includeSelectedBtn.className = "llm-shortcut-btn";
-  includeSelectedBtn.type = "button";
-  includeSelectedBtn.textContent = "Add Text Selection";
-  includeSelectedBtn.dataset.shortcutId = INCLUDE_SELECTED_TEXT_SHORTCUT_ID;
-  includeSelectedBtn.dataset.shortcutKind = "special";
-  includeSelectedBtn.dataset.prompt = "";
-  includeSelectedBtn.disabled = !item || moveMode;
-  const cacheSelectionBeforeFocusShift = () => {
-    pendingSelectedText = getActiveReaderSelectionText(
-      body.ownerDocument as Document,
-      item,
-    );
-  };
-  includeSelectedBtn.addEventListener(
-    "pointerdown",
-    cacheSelectionBeforeFocusShift,
-  );
-  includeSelectedBtn.addEventListener(
-    "mousedown",
-    cacheSelectionBeforeFocusShift,
-  );
-  container.appendChild(includeSelectedBtn);
-
   const getShortcutButtonFromEventTarget = (
     target: EventTarget | null,
   ): HTMLButtonElement | null => {
@@ -2933,14 +2911,6 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     mouseEvent.preventDefault();
     mouseEvent.stopPropagation();
     const shortcutId = btn.dataset.shortcutId || "";
-    const shortcutKind = btn.dataset.shortcutKind || "";
-    if (shortcutKind === "special") {
-      if (moveMode || !item) return;
-      const selectedText = pendingSelectedText;
-      pendingSelectedText = "";
-      includeSelectedTextFromReader(body, item, selectedText);
-      return;
-    }
     if (!shortcutId || moveMode || !item) return;
     const nextPrompt = (btn.dataset.prompt || "").trim();
     if (!nextPrompt) return;
@@ -2958,7 +2928,6 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     }
     const shortcutId = btn.dataset.shortcutId || "";
     const shortcutKind = btn.dataset.shortcutKind || "";
-    if (shortcutKind === "special") return;
     if (
       shortcutId &&
       (shortcutKind === "builtin" || shortcutKind === "custom")
@@ -2973,8 +2942,7 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     const btn = getShortcutButtonFromEventTarget(dragEvent.target);
     if (!btn) return;
     const shortcutId = btn.dataset.shortcutId || "";
-    const shortcutKind = btn.dataset.shortcutKind || "";
-    if (!shortcutId || shortcutKind === "special") {
+    if (!shortcutId) {
       dragEvent.preventDefault();
       return;
     }
@@ -3000,13 +2968,7 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     const btn = getShortcutButtonFromEventTarget(dragEvent.target);
     if (!btn) return;
     const targetId = btn.dataset.shortcutId || "";
-    const targetKind = btn.dataset.shortcutKind || "";
-    if (
-      !draggingShortcutId ||
-      !targetId ||
-      targetKind === "special" ||
-      draggingShortcutId === targetId
-    ) {
+    if (!draggingShortcutId || !targetId || draggingShortcutId === targetId) {
       return;
     }
     btn.classList.add("llm-shortcut-drop-target");
@@ -3020,13 +2982,7 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     const btn = getShortcutButtonFromEventTarget(dragEvent.target);
     if (!btn) return;
     const targetId = btn.dataset.shortcutId || "";
-    const targetKind = btn.dataset.shortcutKind || "";
-    if (
-      !draggingShortcutId ||
-      !targetId ||
-      targetKind === "special" ||
-      draggingShortcutId === targetId
-    ) {
+    if (!draggingShortcutId || !targetId || draggingShortcutId === targetId) {
       return;
     }
     btn.classList.add("llm-shortcut-drop-target");
@@ -3047,13 +3003,7 @@ async function renderShortcuts(body: Element, item?: Zotero.Item | null) {
     if (!btn) return;
     btn.classList.remove("llm-shortcut-drop-target");
     const targetId = btn.dataset.shortcutId || "";
-    const targetKind = btn.dataset.shortcutKind || "";
-    if (
-      !targetId ||
-      targetKind === "special" ||
-      !draggingShortcutId ||
-      draggingShortcutId === targetId
-    ) {
+    if (!targetId || !draggingShortcutId || draggingShortcutId === targetId) {
       return;
     }
     const sourceId =
@@ -3388,14 +3338,23 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   const modelBtn = body.querySelector(
     "#llm-model-toggle",
   ) as HTMLButtonElement | null;
+  const modelSlot = body.querySelector(
+    "#llm-model-dropdown",
+  ) as HTMLDivElement | null;
   const modelMenu = body.querySelector(
     "#llm-model-menu",
   ) as HTMLDivElement | null;
   const reasoningBtn = body.querySelector(
     "#llm-reasoning-toggle",
   ) as HTMLButtonElement | null;
+  const reasoningSlot = body.querySelector(
+    "#llm-reasoning-dropdown",
+  ) as HTMLDivElement | null;
   const reasoningMenu = body.querySelector(
     "#llm-reasoning-menu",
+  ) as HTMLDivElement | null;
+  const actionsLeft = body.querySelector(
+    ".llm-actions-left",
   ) as HTMLDivElement | null;
   const clearBtn = body.querySelector("#llm-clear") as HTMLButtonElement | null;
   const selectTextBtn = body.querySelector(
@@ -3583,17 +3542,18 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       previewMeta.textContent = `${selectedImages.length}/${MAX_SELECTED_IMAGES} screenshot${selectedImages.length > 1 ? "s" : ""}`;
       imagePreview.style.display = "flex";
       screenshotBtn.disabled = selectedImages.length >= MAX_SELECTED_IMAGES;
-      screenshotBtn.textContent =
+      screenshotBtn.title =
         selectedImages.length >= MAX_SELECTED_IMAGES
           ? `Max ${MAX_SELECTED_IMAGES} screenshots`
-          : `Screenshot (${selectedImages.length}/${MAX_SELECTED_IMAGES})`;
+          : `Add screenshot (${selectedImages.length}/${MAX_SELECTED_IMAGES})`;
     } else {
       imagePreview.style.display = "none";
       previewStrip.innerHTML = "";
       previewMeta.textContent = "0 images selected";
       screenshotBtn.disabled = false;
-      screenshotBtn.textContent = "Screenshot";
+      screenshotBtn.title = "Select figure screenshot";
     }
+    applyResponsiveActionButtonsLayout();
   };
 
   const updateSelectedTextPreview = () => {
@@ -3642,15 +3602,97 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
     };
   };
 
+  const setActionButtonLabel = (
+    button: HTMLButtonElement | null,
+    expandedLabel: string,
+    compactLabel: string,
+    collapsed: boolean,
+  ) => {
+    if (!button) return;
+    const nextLabel = collapsed ? compactLabel : expandedLabel;
+    if (button.textContent !== nextLabel) {
+      button.textContent = nextLabel;
+    }
+    button.classList.toggle("llm-action-icon-only", collapsed);
+  };
+
+  const applyResponsiveActionButtonsLayout = () => {
+    setActionButtonLabel(
+      selectTextBtn,
+      SELECT_TEXT_EXPANDED_LABEL,
+      SELECT_TEXT_COMPACT_LABEL,
+      false,
+    );
+    setActionButtonLabel(
+      screenshotBtn,
+      SCREENSHOT_EXPANDED_LABEL,
+      SCREENSHOT_COMPACT_LABEL,
+      false,
+    );
+    if (!modelBtn) return;
+    const modelLabel = modelBtn.dataset.modelLabel || "default";
+    const modelHint = modelBtn.dataset.modelHint || "";
+    const reasoningLabel =
+      reasoningBtn?.dataset.reasoningLabel ||
+      reasoningBtn?.textContent ||
+      "Reasoning";
+    const reasoningHint = reasoningBtn?.dataset.reasoningHint || "";
+    modelBtn.classList.remove("llm-model-btn-collapsed");
+    modelSlot?.classList.remove("llm-model-dropdown-collapsed");
+    reasoningBtn?.classList.remove("llm-reasoning-btn-collapsed");
+    reasoningSlot?.classList.remove("llm-reasoning-dropdown-collapsed");
+    modelBtn.textContent = modelLabel;
+    modelBtn.title = modelHint;
+    if (reasoningBtn) {
+      reasoningBtn.textContent = reasoningLabel;
+      reasoningBtn.title = reasoningHint;
+    }
+    if (!actionsLeft) return;
+    const slotWidth =
+      modelSlot?.getBoundingClientRect().width ||
+      modelBtn.getBoundingClientRect().width;
+    const isOverflowing = actionsLeft.scrollWidth - actionsLeft.clientWidth > 1;
+    const collapseThreshold = modelLabel.length > 16 ? 132 : 116;
+    const shouldCollapse = isOverflowing || slotWidth <= collapseThreshold;
+    setActionButtonLabel(
+      selectTextBtn,
+      SELECT_TEXT_EXPANDED_LABEL,
+      SELECT_TEXT_COMPACT_LABEL,
+      shouldCollapse,
+    );
+    setActionButtonLabel(
+      screenshotBtn,
+      SCREENSHOT_EXPANDED_LABEL,
+      SCREENSHOT_COMPACT_LABEL,
+      shouldCollapse,
+    );
+    if (!shouldCollapse) return;
+    modelBtn.classList.add("llm-model-btn-collapsed");
+    modelSlot?.classList.add("llm-model-dropdown-collapsed");
+    modelBtn.textContent = "\ud83e\udde0";
+    modelBtn.title = modelHint
+      ? `${modelLabel}\n${modelHint}`
+      : modelLabel;
+    if (reasoningBtn) {
+      reasoningBtn.classList.add("llm-reasoning-btn-collapsed");
+      reasoningSlot?.classList.add("llm-reasoning-dropdown-collapsed");
+      reasoningBtn.textContent = REASONING_COMPACT_LABEL;
+      reasoningBtn.title = reasoningHint
+        ? `${reasoningLabel}\n${reasoningHint}`
+        : reasoningLabel;
+    }
+  };
+
   const updateModelButton = () => {
     if (!item || !modelBtn) return;
     const { choices, currentModel } = getSelectedModelInfo();
     const hasSecondary = choices.length > 1;
-    modelBtn.textContent = `${currentModel || "default"}`;
-    modelBtn.disabled = !item;
-    modelBtn.title = hasSecondary
+    modelBtn.dataset.modelLabel = `${currentModel || "default"}`;
+    modelBtn.dataset.modelHint = hasSecondary
       ? "Click to choose a model"
       : "Only one model is configured";
+    modelBtn.disabled = !item;
+    applyResponsiveActionButtonsLayout();
   };
 
   const isPrimaryPointerEvent = (e: Event): boolean => {
@@ -3728,27 +3770,19 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
     const { enabledLevels, selectedLevel } = getReasoningState();
     const available = enabledLevels.length > 0;
     const active = available && selectedLevel !== "none";
-    reasoningBtn.textContent = active ? `Level: ${selectedLevel}` : "Reasoning";
+    const reasoningLabel = active ? `${selectedLevel}` : "Reasoning";
     reasoningBtn.disabled = !item || !available;
     reasoningBtn.classList.toggle("llm-reasoning-btn-unavailable", !available);
     reasoningBtn.classList.toggle("llm-reasoning-btn-active", active);
-    // Inline style ensures visible state change even if theme/CSS caching overrides classes.
-    if (active) {
-      reasoningBtn.style.background = "#2563eb";
-      reasoningBtn.style.borderColor = "#2563eb";
-      reasoningBtn.style.color = "#fff";
-    } else if (!available) {
-      reasoningBtn.style.background = "var(--fill-quaternary)";
-      reasoningBtn.style.borderColor = "var(--stroke-secondary)";
-      reasoningBtn.style.color = "var(--fill-tertiary)";
-    } else {
-      reasoningBtn.style.background = "";
-      reasoningBtn.style.borderColor = "";
-      reasoningBtn.style.color = "";
-    }
-    reasoningBtn.title = available
+    reasoningBtn.style.background = "";
+    reasoningBtn.style.borderColor = "";
+    reasoningBtn.style.color = "";
+    const reasoningHint = available
       ? "Click to choose reasoning level"
       : "Reasoning unavailable for current model";
+    reasoningBtn.dataset.reasoningLabel = reasoningLabel;
+    reasoningBtn.dataset.reasoningHint = reasoningHint;
+    applyResponsiveActionButtonsLayout();
   };
 
   const rebuildReasoningMenu = () => {
@@ -3806,6 +3840,13 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   // Re-sync model label when the user comes back and interacts.
   body.addEventListener("pointerenter", syncModelFromPrefs);
   body.addEventListener("focusin", syncModelFromPrefs);
+  const ResizeObserverCtor = body.ownerDocument?.defaultView?.ResizeObserver;
+  if (ResizeObserverCtor && panelRoot && modelBtn) {
+    const ro = new ResizeObserverCtor(() => {
+      applyResponsiveActionButtonsLayout();
+    });
+    ro.observe(panelRoot);
+  }
 
   const getSelectedProfile = () => {
     if (!item) return null;
