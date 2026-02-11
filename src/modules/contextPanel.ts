@@ -168,8 +168,9 @@ let currentAbortController: AbortController | null = null;
 let panelFontScalePercent = FONT_SCALE_DEFAULT_PERCENT;
 let responseMenuTarget: {
   item: Zotero.Item;
-  noteText: string;
-  noteHtml: string;
+  /** Text to operate on: the selected portion (with KaTeX-safe extraction)
+   *  if the user has a selection, otherwise the full raw markdown source. */
+  contentText: string;
   modelName: string;
 } | null = null;
 
@@ -1061,7 +1062,7 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
     {
       id: "llm-response-menu-note",
       type: "button",
-      textContent: "Save into item note",
+      textContent: "Save as note",
     },
   );
   responseMenu.append(responseMenuCopyBtn, responseMenuNoteBtn);
@@ -2201,20 +2202,7 @@ function buildAssistantNoteHtml(
     ztoolkit.log("Note markdown render error:", err);
     responseHtml = escapeNoteHtml(response).replace(/\n/g, "<br/>");
   }
-  return `<p><strong>${escapeNoteHtml(timestamp)}</strong></p><p><strong>${escapeNoteHtml(source)}:</strong></p><div>${responseHtml}</div><hr/><p>Written by Zoter-LLM</p>`;
-}
-
-function buildAssistantNoteHtmlFromRenderedSelection(
-  renderedHtml: string,
-  modelName: string,
-): string {
-  const source = modelName.trim() || "unknown";
-  const timestamp = getCurrentLocalTimestamp();
-  const body = renderedHtml.trim();
-  if (!body) {
-    return buildAssistantNoteHtml("", modelName);
-  }
-  return `<p><strong>${escapeNoteHtml(timestamp)}</strong></p><p><strong>${escapeNoteHtml(source)}:</strong></p><div>${body}</div><hr/><p>Written by Zoter-LLM</p>`;
+  return `<p><strong>${escapeNoteHtml(timestamp)}</strong></p><p><strong>${escapeNoteHtml(source)}:</strong></p><div>${responseHtml}</div><hr/><p>Written by Zotero-LLM</p>`;
 }
 
 function renderChatMessageHtmlForNote(text: string): string {
@@ -2259,11 +2247,20 @@ function buildChatHistoryNotePayload(messages: Message[]): {
 }
 
 function getAssistantNoteMap(): Record<string, string> {
-  return getJsonPref(ASSISTANT_NOTE_MAP_PREF_KEY);
+  try {
+    return getJsonPref(ASSISTANT_NOTE_MAP_PREF_KEY);
+  } catch (err) {
+    ztoolkit.log("LLM: Failed to read assistantNoteMap pref:", err);
+    return {};
+  }
 }
 
 function setAssistantNoteMap(value: Record<string, string>): void {
-  setJsonPref(ASSISTANT_NOTE_MAP_PREF_KEY, value);
+  try {
+    setJsonPref(ASSISTANT_NOTE_MAP_PREF_KEY, value);
+  } catch (err) {
+    ztoolkit.log("LLM: Failed to write assistantNoteMap pref:", err);
+  }
 }
 
 function removeAssistantNoteMapEntry(parentItemId: number): void {
@@ -2280,12 +2277,19 @@ function getTrackedAssistantNoteForParent(parentItemId: number): Zotero.Item | n
   const rawNoteId = map[parentKey];
   if (!rawNoteId) return null;
   const noteId = Number.parseInt(rawNoteId, 10);
-  if (!Number.isFinite(noteId)) {
+  if (!Number.isFinite(noteId) || noteId <= 0) {
     removeAssistantNoteMapEntry(parentItemId);
     return null;
   }
-  const note = Zotero.Items.get(noteId) || null;
-  if (!note || !note.isNote() || note.parentID !== parentItemId) {
+  let note: Zotero.Item | null = null;
+  try {
+    note = Zotero.Items.get(noteId) || null;
+  } catch {
+    ztoolkit.log(`LLM: Failed to get note item ${noteId}`);
+    removeAssistantNoteMapEntry(parentItemId);
+    return null;
+  }
+  if (!note || !note.isNote?.() || note.deleted || note.parentID !== parentItemId) {
     removeAssistantNoteMapEntry(parentItemId);
     return null;
   }
@@ -2293,7 +2297,7 @@ function getTrackedAssistantNoteForParent(parentItemId: number): Zotero.Item | n
 }
 
 function rememberAssistantNoteForParent(parentItemId: number, noteId: number): void {
-  if (!Number.isFinite(noteId)) return;
+  if (!Number.isFinite(noteId) || noteId <= 0) return;
   const map = getAssistantNoteMap();
   map[String(parentItemId)] = String(noteId);
   setAssistantNoteMap(map);
@@ -2311,173 +2315,15 @@ function appendAssistantAnswerToNoteHtml(
 }
 
 /**
- * Convert KaTeX-rendered HTML into Zotero note-editor native math format.
+ * Extract the selected text within a bubble, replacing KaTeX-rendered math
+ * with its original LaTeX source wrapped in `$...$` (inline) or `$$...$$`
+ * (display).  This avoids the duplication caused by KaTeX's dual
+ * MathML + visual HTML rendering when using plain `selection.toString()`.
  *
- * KaTeX produces <math> elements with <annotation encoding="application/x-tex">
- * inside complex span trees. The note-editor's ProseMirror schema expects
- * <pre class="math">$$…$$</pre> for display math and
- * <span class="math">$…$</span> for inline math when loading via setNote().
- *
- * This function finds each KaTeX math expression, extracts the original LaTeX
- * from the MathML annotation, and replaces the whole KaTeX tree with the
- * native format.
+ * Returns `""` if no text is selected or the selection is outside the
+ * container.
  */
-function convertKatexHtmlToNoteFormat(
-  doc: Document,
-  html: string,
-): string {
-  if (!html.trim()) return html;
-
-  const container = doc.createElement("div");
-  container.innerHTML = html;
-
-  const annotations = Array.from(
-    container.querySelectorAll('annotation[encoding="application/x-tex"]'),
-  ) as Element[];
-  if (annotations.length === 0) return html;
-
-  for (const ann of annotations) {
-    const latex = (ann.textContent || "").trim();
-    if (!latex) continue;
-
-    // Walk up: annotation → semantics → math
-    const mathEl = ann.closest("math");
-    if (!mathEl) continue;
-
-    // KaTeX display math has display="block" on the <math> element
-    const isDisplay = mathEl.getAttribute("display") === "block";
-
-    // Walk up: math → span(katex-mathml) → span(katex) [→ span/div wrapper]
-    // Find the outermost KaTeX wrapper to replace.
-    let target: Element = mathEl;
-    // Go up through the span wrappers generated by KaTeX
-    while (
-      target.parentElement &&
-      target.parentElement !== container &&
-      target.parentElement.tagName !== "P" &&
-      target.parentElement.tagName !== "LI" &&
-      target.parentElement.tagName !== "TD" &&
-      target.parentElement.tagName !== "TH" &&
-      target.parentElement.tagName !== "BLOCKQUOTE" &&
-      target.parentElement.tagName !== "DIV" &&
-      target.parentElement.tagName !== "PRE"
-    ) {
-      target = target.parentElement;
-    }
-    // Also include the wrapping div (from renderMathBlock's <div class="math-display">)
-    if (
-      isDisplay &&
-      target.parentElement &&
-      target.parentElement !== container &&
-      target.parentElement.tagName === "DIV" &&
-      target.parentElement.children.length === 1
-    ) {
-      target = target.parentElement;
-    }
-
-    if (isDisplay) {
-      const pre = doc.createElement("pre");
-      pre.className = "math";
-      pre.textContent = `$$${latex}$$`;
-      target.replaceWith(pre);
-    } else {
-      const span = doc.createElement("span");
-      span.className = "math";
-      span.textContent = `$${latex}$`;
-      target.replaceWith(span);
-    }
-  }
-
-  return container.innerHTML.trim();
-}
-
-function sanitizeHtmlFragmentForNote(
-  doc: Document,
-  fragmentHtml: string,
-): string {
-  const wrapper = doc.createElement("div");
-  wrapper.innerHTML = fragmentHtml;
-
-  const blockedTags = new Set([
-    "SCRIPT",
-    "STYLE",
-    "IFRAME",
-    "OBJECT",
-    "EMBED",
-    "LINK",
-    "META",
-    "FORM",
-    "INPUT",
-    "BUTTON",
-    "TEXTAREA",
-    "SELECT",
-  ]);
-
-  const walk = (node: Node) => {
-    const childNodes = Array.from(node.childNodes);
-    for (const child of childNodes) {
-      if (!child) continue;
-      if (child.nodeType !== 1) {
-        walk(child);
-        continue;
-      }
-      const el = child as Element;
-      const tag = (el.tagName || "").toUpperCase();
-      if (blockedTags.has(tag)) {
-        el.remove();
-        continue;
-      }
-
-      for (const attr of Array.from(el.attributes)) {
-        const name = attr.name.toLowerCase();
-        const value = (attr.value || "").trim().toLowerCase();
-        if (name.startsWith("on")) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if (name === "style" || name === "id" || name === "class") {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if (
-          (name === "href" || name === "src" || name === "xlink:href") &&
-          (value.startsWith("javascript:") ||
-            value.startsWith("data:text/html"))
-        ) {
-          el.removeAttribute(attr.name);
-        }
-      }
-
-      walk(el);
-    }
-  };
-
-  walk(wrapper);
-  return wrapper.innerHTML.trim();
-}
-
-function getSelectedTextWithinElement(
-  doc: Document,
-  container: HTMLElement,
-): string {
-  const win = doc.defaultView;
-  const selection = win?.getSelection?.();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-    return "";
-  }
-  const selected = sanitizeText(selection.toString() || "").trim();
-  if (!selected) return "";
-  const anchorNode = selection.anchorNode;
-  const focusNode = selection.focusNode;
-  const anchorInside = !!(anchorNode && container.contains(anchorNode));
-  const focusInside = !!(focusNode && container.contains(focusNode));
-  if (!anchorInside || !focusInside) {
-    return "";
-  }
-  return selected;
-}
-
-function getSelectedHtmlWithinElement(
+function getSelectedTextWithinBubble(
   doc: Document,
   container: HTMLElement,
 ): string {
@@ -2489,9 +2335,12 @@ function getSelectedHtmlWithinElement(
 
   const anchorNode = selection.anchorNode;
   const focusNode = selection.focusNode;
-  const anchorInside = !!(anchorNode && container.contains(anchorNode));
-  const focusInside = !!(focusNode && container.contains(focusNode));
-  if (!anchorInside || !focusInside) {
+  if (
+    !anchorNode ||
+    !focusNode ||
+    !container.contains(anchorNode) ||
+    !container.contains(focusNode)
+  ) {
     return "";
   }
 
@@ -2500,10 +2349,41 @@ function getSelectedHtmlWithinElement(
     const fragment = range.cloneContents();
     const temp = doc.createElement("div");
     temp.appendChild(fragment);
-    const selectedHtml = String(temp.innerHTML || "");
-    return sanitizeHtmlFragmentForNote(doc, selectedHtml);
+
+    // Replace complete KaTeX elements with their LaTeX source so that
+    // the extracted text preserves math as $...$ / $$...$$.
+    const katexEls = Array.from(
+      temp.querySelectorAll(".katex"),
+    ) as Element[];
+    for (const el of katexEls) {
+      const ann = el.querySelector(
+        'annotation[encoding="application/x-tex"]',
+      );
+      if (ann) {
+        const latex = (ann.textContent || "").trim();
+        const mathEl = ann.closest("math");
+        const isDisplay = mathEl?.getAttribute("display") === "block";
+        el.replaceWith(
+          doc.createTextNode(isDisplay ? `$$${latex}$$` : `$${latex}$`),
+        );
+        continue;
+      }
+      // No annotation found (partial selection) — remove the MathML
+      // duplicate and keep only the visual text.
+      const mathml = el.querySelector(".katex-mathml");
+      if (mathml) mathml.remove();
+    }
+
+    // Also handle any stray katex-mathml spans that live outside a
+    // .katex wrapper (e.g. when the selection boundary splits the tree).
+    const strayMathml = Array.from(
+      temp.querySelectorAll(".katex-mathml"),
+    ) as Element[];
+    for (const el of strayMathml) el.remove();
+
+    return sanitizeText(temp.textContent || "").trim();
   } catch (err) {
-    ztoolkit.log("Selected HTML extraction failed:", err);
+    ztoolkit.log("LLM: Selected text extraction failed:", err);
     return "";
   }
 }
@@ -2638,85 +2518,110 @@ async function copyTextToClipboard(body: Element, text: string): Promise<void> {
   }
 }
 
-function htmlToPlainText(doc: Document, html: string): string {
-  const temp = doc.createElement("div");
-  temp.innerHTML = html;
-  return sanitizeText(temp.textContent || "").trim();
-}
-
-async function copyNotePayloadToClipboard(
+/**
+ * Render markdown text through renderMarkdownForNote and copy the result
+ * to the clipboard as both text/html and text/plain.  When pasted into a
+ * Zotero note, the HTML version is used — producing the same rendering as
+ * "Save as note".  When pasted into a plain-text editor, the raw markdown
+ * is used — matching "Copy chat as md".
+ */
+async function copyRenderedMarkdownToClipboard(
   body: Element,
-  noteHtml: string,
-  noteText: string,
+  markdownText: string,
 ): Promise<void> {
-  const doc = body.ownerDocument;
-  if (!doc) {
-    await copyTextToClipboard(body, noteText);
-    return;
-  }
-  const html = sanitizeHtmlFragmentForNote(doc, noteHtml || "");
-  const plain = html
-    ? htmlToPlainText(doc, html)
-    : sanitizeText(noteText || "").trim();
-  const win = doc.defaultView as
-    | (Window & {
-        navigator?: Navigator;
-        ClipboardItem?: new (items: Record<string, Blob>) => ClipboardItem;
-      })
-    | undefined;
+  const safeText = sanitizeText(markdownText).trim();
+  if (!safeText) return;
 
-  if (html && plain && win?.navigator?.clipboard?.write && win.ClipboardItem) {
-    try {
-      const item = new win.ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([plain], { type: "text/plain" }),
-      });
-      await win.navigator.clipboard.write([item]);
-      return;
-    } catch (err) {
-      ztoolkit.log("Clipboard rich copy failed:", err);
+  let renderedHtml = "";
+  try {
+    renderedHtml = renderMarkdownForNote(safeText);
+  } catch (err) {
+    ztoolkit.log("LLM: Copy markdown render error:", err);
+  }
+
+  // Try rich clipboard (HTML + plain) first so that paste into Zotero
+  // notes gives properly rendered content with math.
+  if (renderedHtml) {
+    const win = body.ownerDocument?.defaultView as
+      | (Window & {
+          navigator?: Navigator;
+          ClipboardItem?: new (items: Record<string, Blob>) => ClipboardItem;
+        })
+      | undefined;
+    if (win?.navigator?.clipboard?.write && win.ClipboardItem) {
+      try {
+        const item = new win.ClipboardItem({
+          "text/html": new Blob([renderedHtml], { type: "text/html" }),
+          "text/plain": new Blob([safeText], { type: "text/plain" }),
+        });
+        await win.navigator.clipboard.write([item]);
+        return;
+      } catch (err) {
+        ztoolkit.log("LLM: Rich clipboard write failed, falling back:", err);
+      }
     }
   }
 
-  await copyTextToClipboard(body, plain);
+  // Fallback: copy raw markdown as plain text.
+  await copyTextToClipboard(body, safeText);
 }
 
 async function createNoteFromAssistantText(
   item: Zotero.Item,
   contentText: string,
   modelName: string,
-  renderedSelectionHtml = "",
 ): Promise<"created" | "appended"> {
   const parentItem = resolveParentItemForNote(item);
-  if (!parentItem?.id) {
+  const parentId = parentItem?.id;
+  if (!parentItem || !parentId) {
     throw new Error("No parent item available for note creation");
   }
 
-  const html =
-    renderedSelectionHtml.trim() !== ""
-      ? buildAssistantNoteHtmlFromRenderedSelection(
-          renderedSelectionHtml,
-          modelName,
-        )
-      : buildAssistantNoteHtml(contentText, modelName);
-  const existingNote = getTrackedAssistantNoteForParent(parentItem.id);
+  // Always render from the plain-text / markdown source via
+  // renderMarkdownForNote.  This produces clean HTML that Zotero's
+  // ProseMirror note-editor can reliably parse.  (The previous approach
+  // of injecting rendered DOM HTML from the bubble was fragile — KaTeX
+  // span trees and sanitised classless wrappers were mostly dropped by
+  // ProseMirror.)
+  const html = buildAssistantNoteHtml(contentText, modelName);
+
+  // Try to find an existing tracked note for this parent item.
+  // If one exists and is still valid, append the new content to it.
+  const existingNote = getTrackedAssistantNoteForParent(parentId);
   if (existingNote) {
-    const appendedHtml = appendAssistantAnswerToNoteHtml(
-      existingNote.getNote() || "",
-      html,
-    );
-    existingNote.setNote(appendedHtml);
-    await existingNote.saveTx();
-    return "appended";
+    try {
+      const appendedHtml = appendAssistantAnswerToNoteHtml(
+        existingNote.getNote() || "",
+        html,
+      );
+      existingNote.setNote(appendedHtml);
+      await existingNote.saveTx();
+      ztoolkit.log(`LLM: Appended to existing note ${existingNote.id} for parent ${parentId}`);
+      return "appended";
+    } catch (appendErr) {
+      // If appending fails (e.g. note was deleted externally), fall through
+      // to create a new note instead.
+      ztoolkit.log("LLM: Failed to append to existing note, creating new:", appendErr);
+      removeAssistantNoteMapEntry(parentId);
+    }
   }
 
+  // No existing tracked note (or append failed) – create a brand-new note.
   const note = new Zotero.Item("note");
   note.libraryID = parentItem.libraryID;
-  note.parentID = parentItem.id;
+  note.parentID = parentId;
   note.setNote(html);
-  await note.saveTx();
-  if (note.id) {
-    rememberAssistantNoteForParent(parentItem.id, note.id);
+  const saveResult = await note.saveTx();
+  // saveTx() returns the new item ID (number) on creation.
+  // Also check note.id as a fallback.
+  const newNoteId = typeof saveResult === "number" && saveResult > 0
+    ? saveResult
+    : note.id;
+  if (newNoteId && newNoteId > 0) {
+    rememberAssistantNoteForParent(parentId, newNoteId);
+    ztoolkit.log(`LLM: Created new note ${newNoteId} for parent ${parentId}`);
+  } else {
+    ztoolkit.log("LLM: Warning – note was saved but could not determine note ID");
   }
   return "created";
 }
@@ -2726,14 +2631,20 @@ async function createNoteFromChatHistory(
   history: Message[],
 ): Promise<void> {
   const parentItem = resolveParentItemForNote(item);
-  if (!parentItem?.id) {
+  const parentId = parentItem?.id;
+  if (!parentItem || !parentId) {
     throw new Error("No parent item available for note creation");
   }
+  // Chat history export always creates a brand-new, standalone note.
+  // It does NOT append to the tracked assistant note and does NOT
+  // update the tracked note ID, so single-response "Save as note"
+  // keeps its own append chain undisturbed.
   const note = new Zotero.Item("note");
   note.libraryID = parentItem.libraryID;
-  note.parentID = parentItem.id;
+  note.parentID = parentId;
   note.setNote(buildChatHistoryNotePayload(history).noteHtml);
   await note.saveTx();
+  ztoolkit.log(`LLM: Created chat history note for parent ${parentId}`);
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -3832,6 +3743,11 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   if (responseMenu && responseMenuCopyBtn && responseMenuNoteBtn) {
     if (!responseMenu.dataset.listenerAttached) {
       responseMenu.dataset.listenerAttached = "true";
+      // Stop propagation for both pointer and mouse events so that the
+      // document-level dismiss handler cannot race with button clicks.
+      responseMenu.addEventListener("pointerdown", (e: Event) => {
+        e.stopPropagation();
+      });
       responseMenu.addEventListener("mousedown", (e: Event) => {
         e.stopPropagation();
       });
@@ -3842,35 +3758,37 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       responseMenuCopyBtn.addEventListener("click", async (e: Event) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!responseMenuTarget) return;
-        await copyNotePayloadToClipboard(
-          body,
-          responseMenuTarget.noteHtml,
-          responseMenuTarget.noteText,
-        );
-        if (status) setStatus(status, "Copied response", "ready");
+        const target = responseMenuTarget;
         closeResponseMenu();
+        if (!target) return;
+        // Render through renderMarkdownForNote and copy both HTML
+        // (for rich-text paste into Zotero notes) and plain text
+        // (for plain-text editors).  Uses the selection if present,
+        // otherwise the full response.
+        await copyRenderedMarkdownToClipboard(body, target.contentText);
+        if (status) setStatus(status, "Copied response", "ready");
       });
       responseMenuNoteBtn.addEventListener("click", async (e: Event) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!responseMenuTarget) return;
+        // Capture all needed values immediately before any async work,
+        // so that even if responseMenuTarget is cleared we still have them.
+        const target = responseMenuTarget;
+        closeResponseMenu();
+        if (!target) {
+          ztoolkit.log("LLM: Note save – no responseMenuTarget");
+          return;
+        }
+        const { item: targetItem, contentText, modelName } = target;
+        if (!targetItem || !contentText) {
+          ztoolkit.log("LLM: Note save – missing item or contentText");
+          return;
+        }
         try {
-          // When a selection is present, its HTML may contain KaTeX-rendered
-          // math. Convert it to Zotero note-editor native format so that
-          // note.setNote() loads math correctly.
-          let selectionHtml = responseMenuTarget.noteHtml;
-          if (selectionHtml && body.ownerDocument) {
-            selectionHtml = convertKatexHtmlToNoteFormat(
-              body.ownerDocument,
-              selectionHtml,
-            );
-          }
           const saveResult = await createNoteFromAssistantText(
-            responseMenuTarget.item,
-            responseMenuTarget.noteText,
-            responseMenuTarget.modelName,
-            selectionHtml,
+            targetItem,
+            contentText,
+            modelName,
           );
           if (status) {
             setStatus(
@@ -3884,8 +3802,6 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
         } catch (err) {
           ztoolkit.log("Create note failed:", err);
           if (status) setStatus(status, "Failed to create note", "error");
-        } finally {
-          closeResponseMenu();
         }
       });
     }
@@ -3894,6 +3810,9 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   if (exportMenu && exportMenuCopyBtn && exportMenuNoteBtn) {
     if (!exportMenu.dataset.listenerAttached) {
       exportMenu.dataset.listenerAttached = "true";
+      exportMenu.addEventListener("pointerdown", (e: Event) => {
+        e.stopPropagation();
+      });
       exportMenu.addEventListener("mousedown", (e: Event) => {
         e.stopPropagation();
       });
@@ -3922,24 +3841,23 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       exportMenuNoteBtn.addEventListener("click", async (e: Event) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!item) return;
+        const currentItem = item;
+        closeExportMenu();
+        if (!currentItem) return;
         try {
-          await ensureConversationLoaded(item);
-          const conversationKey = getConversationKey(item);
+          await ensureConversationLoaded(currentItem);
+          const conversationKey = getConversationKey(currentItem);
           const history = chatHistory.get(conversationKey) || [];
           const payload = buildChatHistoryNotePayload(history);
           if (!payload.noteText) {
             if (status) setStatus(status, "No chat history detected.", "ready");
-            closeExportMenu();
             return;
           }
-          await createNoteFromChatHistory(item, history);
+          await createNoteFromChatHistory(currentItem, history);
           if (status) setStatus(status, "Saved chat history to new note", "ready");
         } catch (err) {
           ztoolkit.log("Save chat history note failed:", err);
           if (status) setStatus(status, "Failed to save chat history", "error");
-        } finally {
-          closeExportMenu();
         }
       });
     }
@@ -5532,16 +5450,16 @@ function refreshChat(body: Element, item?: Zotero.Item | null) {
           ) as HTMLDivElement | null;
           if (!responseMenu || !item) return;
           if (exportMenu) exportMenu.style.display = "none";
-          const selectedText = getSelectedTextWithinElement(doc, bubble);
-          const selectedHtml = getSelectedHtmlWithinElement(doc, bubble);
-          const fallbackText = sanitizeText(msg.text || "").trim();
-          const noteText = selectedText || fallbackText;
-          const noteHtml = selectedHtml || "";
-          if (!noteText) return;
+          // If the user has text selected within this bubble, extract
+          // just that portion (with KaTeX math properly handled).
+          // Otherwise fall back to the full raw markdown source.
+          const selectedText = getSelectedTextWithinBubble(doc, bubble);
+          const fullMarkdown = sanitizeText(msg.text || "").trim();
+          const contentText = selectedText || fullMarkdown;
+          if (!contentText) return;
           responseMenuTarget = {
             item,
-            noteText,
-            noteHtml,
+            contentText,
             modelName: msg.modelName?.trim() || "unknown",
           };
           positionMenuAtPointer(body, responseMenu, me.clientX, me.clientY);
