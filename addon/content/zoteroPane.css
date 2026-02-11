@@ -656,6 +656,7 @@
   flex-direction: column;
   gap: 10px;
   flex-shrink: 0;
+  min-width: 0;
   padding: 10px;
   border-radius: 16px;
   border: 1px solid var(--stroke-secondary);
@@ -736,12 +737,15 @@
 .llm-actions {
   --llm-action-height: 36px;
   --llm-action-pill-padding: 0 14px;
-  --llm-action-icon-font-size: 22px;
+  --llm-action-icon-font-size: var(--llm-fs-11);
+  --llm-action-font-size: var(--llm-fs-11);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   min-height: var(--llm-action-height);
+  min-width: 0;
+  width: 100%;
 }
 
 .llm-actions-left {
@@ -759,13 +763,19 @@
   justify-content: flex-end;
   gap: 10px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
-.llm-action-slot.llm-model-dropdown,
-.llm-action-slot.llm-reasoning-dropdown {
+.llm-action-slot.llm-model-dropdown {
   flex: 1 1 160px;
   min-width: 84px;
   max-width: 220px;
+}
+
+.llm-action-slot.llm-reasoning-dropdown {
+  flex: 1 1 132px;
+  min-width: 84px;
+  max-width: 160px;
 }
 
 .llm-action-slot.llm-model-dropdown > button,
@@ -775,14 +785,14 @@
 
 .llm-action-slot.llm-model-dropdown.llm-model-dropdown-collapsed {
   flex: 0 0 auto;
-  min-width: 36px;
-  max-width: 36px;
+  min-width: 52px;
+  max-width: 52px;
 }
 
 .llm-action-slot.llm-reasoning-dropdown.llm-reasoning-dropdown-collapsed {
   flex: 0 0 auto;
-  min-width: 36px;
-  max-width: 36px;
+  min-width: 52px;
+  max-width: 52px;
 }
 
 .llm-actions button {
@@ -800,14 +810,13 @@
 
 .llm-action-btn {
   min-width: 0;
-  font-size: var(--llm-fs-12);
+  font-size: var(--llm-action-font-size);
 }
 
 .llm-action-btn-primary {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
-  font-size: var(--llm-fs-13);
   font-weight: 600;
 }
 
@@ -824,7 +833,6 @@
   background: #dc2626;
   border-color: #dc2626;
   color: #fff;
-  font-size: var(--llm-fs-13);
   font-weight: 600;
 }
 
@@ -839,7 +847,7 @@
 }
 
 .llm-screenshot-btn {
-  font-size: var(--llm-fs-12);
+  font-size: var(--llm-action-font-size);
 }
 
 .llm-select-text-btn,
@@ -855,7 +863,7 @@
   margin: 0;
   border-radius: 0;
   font-family: inherit;
-  font-size: var(--llm-fs-12);
+  font-size: var(--llm-action-font-size);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -872,10 +880,7 @@
   min-width: 36px;
   padding: 0;
   font-family:
-    "Apple Color Emoji",
-    "Segoe UI Emoji",
-    "Noto Color Emoji",
-    sans-serif;
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-size: var(--llm-action-icon-font-size);
 }
 
@@ -887,7 +892,6 @@
   border-color: transparent;
 }
 
-
 .llm-send-btn {
   width: auto;
   min-width: 78px;
@@ -895,7 +899,7 @@
   min-height: var(--llm-action-height);
   padding: var(--llm-action-pill-padding);
   border-radius: 999px;
-  font-size: var(--llm-fs-13);
+  font-size: var(--llm-action-font-size);
   font-weight: 600;
   line-height: 1;
 }
@@ -906,7 +910,7 @@
   height: var(--llm-action-height);
   min-height: var(--llm-action-height);
   padding: var(--llm-action-pill-padding);
-  font-size: var(--llm-fs-12);
+  font-size: var(--llm-action-font-size);
 }
 
 .llm-send-icon {
@@ -921,7 +925,6 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-
 
 .llm-status-ready {
   color: var(--color-accent);
@@ -964,7 +967,7 @@
 /* Model / Reasoning toggles */
 .llm-model-btn,
 .llm-reasoning-btn {
-  font-size: var(--llm-fs-12);
+  font-size: var(--llm-action-font-size);
   font-weight: 600;
   min-height: var(--llm-action-height);
   padding: 0 26px;
@@ -975,88 +978,87 @@
   width: 100%;
   min-width: 0;
   max-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.15;
+  white-space: nowrap;
+  line-height: 1;
   text-align: center;
   justify-content: center;
   align-items: center;
   padding-top: 6px;
   padding-bottom: 6px;
-  max-height: calc(2.3em + 12px);
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .llm-actions .llm-model-btn,
 .llm-actions .llm-reasoning-btn {
   padding-top: 6px;
   padding-bottom: 6px;
-  padding-left: 16px;
-  padding-right: 36px;
+  padding-left: 12px;
+  padding-right: 26px;
 }
 
 .llm-action-slot.llm-model-dropdown > .llm-model-btn.llm-model-btn-collapsed {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
-  padding: 0;
-  justify-content: center;
+  width: 52px;
+  min-width: 52px;
+  max-width: 52px;
+  padding: 0 22px 0 8px;
+  justify-content: flex-start;
   align-items: center;
   text-align: center;
   white-space: nowrap;
   line-height: 1;
   max-height: none;
   font-family:
-    "Apple Color Emoji",
-    "Segoe UI Emoji",
-    "Noto Color Emoji",
-    sans-serif;
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-size: var(--llm-action-icon-font-size);
 }
 
 .llm-action-slot.llm-reasoning-dropdown
   > .llm-reasoning-btn.llm-reasoning-btn-collapsed {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
-  padding: 0;
-  justify-content: center;
+  width: 52px;
+  min-width: 52px;
+  max-width: 52px;
+  padding: 0 22px 0 8px;
+  justify-content: flex-start;
   align-items: center;
   text-align: center;
   white-space: nowrap;
   line-height: 1;
   max-height: none;
   font-family:
-    "Apple Color Emoji",
-    "Segoe UI Emoji",
-    "Noto Color Emoji",
-    sans-serif;
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-size: var(--llm-action-icon-font-size);
 }
 
 .llm-model-btn::after,
 .llm-reasoning-btn::after {
-  content: "";
+  content: "▾";
   position: absolute;
   top: 50%;
-  right: 14px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: translateY(-62%) rotate(45deg);
-  opacity: 0.75;
+  right: 10px;
+  width: auto;
+  height: auto;
+  border-right: none;
+  border-bottom: none;
+  transform: translateY(-50%);
+  font-family: sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.9;
   pointer-events: none;
   flex: 0 0 auto;
 }
 
 .llm-model-btn.llm-model-btn-collapsed::after {
-  display: none;
+  display: block;
+  right: 8px;
+  opacity: 0.95;
 }
 
 .llm-reasoning-btn.llm-reasoning-btn-collapsed::after {
-  display: none;
+  display: block;
+  right: 8px;
+  opacity: 0.95;
 }
 
 .llm-reasoning-btn-unavailable {

@@ -53,7 +53,10 @@ const SELECT_TEXT_EXPANDED_LABEL = "Add Text";
 const SELECT_TEXT_COMPACT_LABEL = "✍🏻";
 const SCREENSHOT_EXPANDED_LABEL = "Screenshots";
 const SCREENSHOT_COMPACT_LABEL = "📷";
-const REASONING_COMPACT_LABEL = "🧩";
+const REASONING_COMPACT_LABEL = "💭";
+const ACTION_LAYOUT_FULL_MODE_BUFFER_PX = 8;
+const ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX = 36;
+const ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX = 52;
 const CUSTOM_SHORTCUT_ID_PREFIX = "custom-shortcut";
 
 const BUILTIN_SHORTCUT_FILES = [
@@ -3353,8 +3356,14 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   const reasoningMenu = body.querySelector(
     "#llm-reasoning-menu",
   ) as HTMLDivElement | null;
+  const actionsRow = body.querySelector(
+    ".llm-actions",
+  ) as HTMLDivElement | null;
   const actionsLeft = body.querySelector(
     ".llm-actions-left",
+  ) as HTMLDivElement | null;
+  const actionsRight = body.querySelector(
+    ".llm-actions-right",
   ) as HTMLDivElement | null;
   const clearBtn = body.querySelector("#llm-clear") as HTMLButtonElement | null;
   const selectTextBtn = body.querySelector(
@@ -3606,29 +3615,18 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
     button: HTMLButtonElement | null,
     expandedLabel: string,
     compactLabel: string,
-    collapsed: boolean,
+    mode: "icon" | "full",
   ) => {
     if (!button) return;
-    const nextLabel = collapsed ? compactLabel : expandedLabel;
+    const nextLabel = mode === "icon" ? compactLabel : expandedLabel;
     if (button.textContent !== nextLabel) {
       button.textContent = nextLabel;
     }
-    button.classList.toggle("llm-action-icon-only", collapsed);
+    button.classList.toggle("llm-action-icon-only", mode === "icon");
   };
 
+  let layoutRetryScheduled = false;
   const applyResponsiveActionButtonsLayout = () => {
-    setActionButtonLabel(
-      selectTextBtn,
-      SELECT_TEXT_EXPANDED_LABEL,
-      SELECT_TEXT_COMPACT_LABEL,
-      false,
-    );
-    setActionButtonLabel(
-      screenshotBtn,
-      SCREENSHOT_EXPANDED_LABEL,
-      SCREENSHOT_COMPACT_LABEL,
-      false,
-    );
     if (!modelBtn) return;
     const modelLabel = modelBtn.dataset.modelLabel || "default";
     const modelHint = modelBtn.dataset.modelHint || "";
@@ -3648,38 +3646,245 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       reasoningBtn.title = reasoningHint;
     }
     if (!actionsLeft) return;
-    const slotWidth =
-      modelSlot?.getBoundingClientRect().width ||
-      modelBtn.getBoundingClientRect().width;
-    const isOverflowing = actionsLeft.scrollWidth - actionsLeft.clientWidth > 1;
-    const collapseThreshold = modelLabel.length > 16 ? 132 : 116;
-    const shouldCollapse = isOverflowing || slotWidth <= collapseThreshold;
-    setActionButtonLabel(
-      selectTextBtn,
-      SELECT_TEXT_EXPANDED_LABEL,
-      SELECT_TEXT_COMPACT_LABEL,
-      shouldCollapse,
-    );
-    setActionButtonLabel(
-      screenshotBtn,
-      SCREENSHOT_EXPANDED_LABEL,
-      SCREENSHOT_COMPACT_LABEL,
-      shouldCollapse,
-    );
-    if (!shouldCollapse) return;
-    modelBtn.classList.add("llm-model-btn-collapsed");
-    modelSlot?.classList.add("llm-model-dropdown-collapsed");
-    modelBtn.textContent = "\ud83e\udde0";
-    modelBtn.title = modelHint
-      ? `${modelLabel}\n${modelHint}`
-      : modelLabel;
-    if (reasoningBtn) {
-      reasoningBtn.classList.add("llm-reasoning-btn-collapsed");
-      reasoningSlot?.classList.add("llm-reasoning-dropdown-collapsed");
-      reasoningBtn.textContent = REASONING_COMPACT_LABEL;
-      reasoningBtn.title = reasoningHint
-        ? `${reasoningLabel}\n${reasoningHint}`
-        : reasoningLabel;
+    const immediateAvailableWidth = (() => {
+      const rowWidth = actionsRow?.clientWidth || 0;
+      if (rowWidth > 0) return rowWidth;
+      const leftWidth = actionsLeft.clientWidth || 0;
+      if (leftWidth > 0) return leftWidth;
+      return panelRoot?.clientWidth || 0;
+    })();
+    if (immediateAvailableWidth <= 0) {
+      const view = body.ownerDocument?.defaultView;
+      if (view && !layoutRetryScheduled) {
+        layoutRetryScheduled = true;
+        view.requestAnimationFrame(() => {
+          layoutRetryScheduled = false;
+          applyResponsiveActionButtonsLayout();
+        });
+      }
+      return;
+    }
+    const getComputedSizePx = (
+      style: CSSStyleDeclaration | null | undefined,
+      property: string,
+      fallback = 0,
+    ) => {
+      if (!style) return fallback;
+      const value = Number.parseFloat(style.getPropertyValue(property));
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const textMeasureContext = (() => {
+      const canvas = body.ownerDocument?.createElement(
+        "canvas",
+      ) as HTMLCanvasElement | null;
+      return (
+        (canvas?.getContext("2d") as CanvasRenderingContext2D | null) || null
+      );
+    })();
+    const measureLabelTextWidth = (
+      button: HTMLButtonElement | null,
+      label: string,
+    ) => {
+      if (!button || !label) return 0;
+      const view = body.ownerDocument?.defaultView;
+      const style = view?.getComputedStyle(button);
+      if (textMeasureContext && style) {
+        const font =
+          style.font && style.font !== ""
+            ? style.font
+            : `${style.fontWeight || "400"} ${style.fontSize || "12px"} ${style.fontFamily || "sans-serif"}`;
+        textMeasureContext.font = font;
+        return textMeasureContext.measureText(label).width;
+      }
+      return label.length * 8;
+    };
+    const getElementGapPx = (element: HTMLElement | null) => {
+      if (!element) return 0;
+      const view = body.ownerDocument?.defaultView;
+      const style = view?.getComputedStyle(element);
+      const columnGap = getComputedSizePx(style, "column-gap", NaN);
+      if (Number.isFinite(columnGap)) return columnGap;
+      return getComputedSizePx(style, "gap", 0);
+    };
+    const getButtonNaturalWidth = (
+      button: HTMLButtonElement | null,
+      label: string,
+    ) => {
+      if (!button) return 0;
+      const view = body.ownerDocument?.defaultView;
+      const style = view?.getComputedStyle(button);
+      const textWidth = measureLabelTextWidth(button, label);
+      const paddingWidth =
+        getComputedSizePx(style, "padding-left") +
+        getComputedSizePx(style, "padding-right");
+      const borderWidth =
+        getComputedSizePx(style, "border-left-width") +
+        getComputedSizePx(style, "border-right-width");
+      const chevronAllowance =
+        button === modelBtn || button === reasoningBtn ? 4 : 0;
+      const measuredWidth =
+        textWidth + paddingWidth + borderWidth + chevronAllowance;
+      // Use text-metric width instead of current rendered width so thresholding
+      // does not become stricter just because buttons are currently expanded.
+      return Math.ceil(measuredWidth);
+    };
+    const getSlotWidthBounds = (slot: HTMLElement | null) => {
+      const view = body.ownerDocument?.defaultView;
+      const style = slot ? view?.getComputedStyle(slot) : null;
+      const minWidth = getComputedSizePx(style, "min-width", 0);
+      const maxRaw = getComputedSizePx(
+        style,
+        "max-width",
+        Number.POSITIVE_INFINITY,
+      );
+      const maxWidth = Number.isFinite(maxRaw)
+        ? maxRaw
+        : Number.POSITIVE_INFINITY;
+      return { minWidth, maxWidth };
+    };
+    const getFullSlotRequiredWidth = (
+      slot: HTMLElement | null,
+      button: HTMLButtonElement | null,
+      label: string,
+    ) => {
+      if (!button) return 0;
+      const naturalWidth = getButtonNaturalWidth(button, label);
+      if (!slot) return naturalWidth;
+      const { minWidth, maxWidth } = getSlotWidthBounds(slot);
+      return Math.min(maxWidth, Math.max(minWidth, naturalWidth));
+    };
+    const getModeRequiredWidth = (
+      dropdownMode: DropdownMode,
+      contextButtonMode: ContextButtonMode,
+    ) => {
+      const selectTextSlot = selectTextBtn?.parentElement as HTMLElement | null;
+      const screenshotSlot = screenshotBtn?.parentElement as HTMLElement | null;
+      const leftSlotWidths = [
+        contextButtonMode === "full"
+          ? getFullSlotRequiredWidth(
+              selectTextSlot,
+              selectTextBtn,
+              SELECT_TEXT_EXPANDED_LABEL,
+            )
+          : selectTextBtn
+            ? ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX
+            : 0,
+        contextButtonMode === "full"
+          ? getFullSlotRequiredWidth(
+              screenshotSlot,
+              screenshotBtn,
+              SCREENSHOT_EXPANDED_LABEL,
+            )
+          : screenshotBtn
+            ? ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX
+            : 0,
+        dropdownMode === "full"
+          ? getFullSlotRequiredWidth(modelSlot, modelBtn, modelLabel)
+          : modelBtn
+            ? ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX
+            : 0,
+        dropdownMode === "full"
+          ? getFullSlotRequiredWidth(
+              reasoningSlot,
+              reasoningBtn,
+              reasoningLabel,
+            )
+          : reasoningBtn
+            ? ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX
+            : 0,
+      ].filter((width) => width > 0);
+      const leftGap = getElementGapPx(actionsLeft);
+      const leftRequiredWidth =
+        leftSlotWidths.reduce((sum, width) => sum + width, 0) +
+        Math.max(0, leftSlotWidths.length - 1) * leftGap;
+      const rightRequiredWidth =
+        actionsRight?.scrollWidth || sendBtn?.scrollWidth || 0;
+      const rowGap = getElementGapPx(actionsRow);
+      return leftRequiredWidth + rightRequiredWidth + rowGap;
+    };
+    const getAvailableRowWidth = () => {
+      const rowWidth = actionsRow?.clientWidth || 0;
+      if (rowWidth > 0) return rowWidth;
+      const panelWidth = panelRoot?.clientWidth || 0;
+      if (panelWidth > 0) return panelWidth;
+      return actionsLeft.clientWidth || 0;
+    };
+    const doesModeFit = (
+      dropdownMode: DropdownMode,
+      contextButtonMode: ContextButtonMode,
+    ) => {
+      const modeRequiredWidth = getModeRequiredWidth(
+        dropdownMode,
+        contextButtonMode,
+      );
+      const modeBuffer =
+        dropdownMode === "icon" && contextButtonMode === "icon"
+          ? 0
+          : ACTION_LAYOUT_FULL_MODE_BUFFER_PX;
+      return getAvailableRowWidth() + 1 >= modeRequiredWidth + modeBuffer;
+    };
+
+    type DropdownMode = "icon" | "full";
+    type ContextButtonMode = "icon" | "full";
+
+    const applyLayoutModes = (
+      dropdownMode: DropdownMode,
+      contextButtonMode: ContextButtonMode,
+    ) => {
+      setActionButtonLabel(
+        selectTextBtn,
+        SELECT_TEXT_EXPANDED_LABEL,
+        SELECT_TEXT_COMPACT_LABEL,
+        contextButtonMode,
+      );
+      setActionButtonLabel(
+        screenshotBtn,
+        SCREENSHOT_EXPANDED_LABEL,
+        SCREENSHOT_COMPACT_LABEL,
+        contextButtonMode,
+      );
+
+      modelBtn.classList.remove("llm-model-btn-collapsed");
+      modelSlot?.classList.remove("llm-model-dropdown-collapsed");
+      reasoningBtn?.classList.remove("llm-reasoning-btn-collapsed");
+      reasoningSlot?.classList.remove("llm-reasoning-dropdown-collapsed");
+      modelBtn.textContent = modelLabel;
+      modelBtn.title = modelHint;
+      if (reasoningBtn) {
+        reasoningBtn.textContent = reasoningLabel;
+        reasoningBtn.title = reasoningHint;
+      }
+
+      if (dropdownMode !== "icon") return;
+      modelBtn.classList.add("llm-model-btn-collapsed");
+      modelSlot?.classList.add("llm-model-dropdown-collapsed");
+      modelBtn.textContent = "\ud83e\udde0";
+      modelBtn.title = modelHint ? `${modelLabel}\n${modelHint}` : modelLabel;
+      if (reasoningBtn) {
+        reasoningBtn.classList.add("llm-reasoning-btn-collapsed");
+        reasoningSlot?.classList.add("llm-reasoning-dropdown-collapsed");
+        reasoningBtn.textContent = REASONING_COMPACT_LABEL;
+        reasoningBtn.title = reasoningHint
+          ? `${reasoningLabel}\n${reasoningHint}`
+          : reasoningLabel;
+      }
+    };
+
+    const layoutHasIssues = (
+      currentDropdownMode: DropdownMode,
+      currentContextButtonMode: ContextButtonMode,
+    ) => !doesModeFit(currentDropdownMode, currentContextButtonMode);
+
+    const candidateModes: ReadonlyArray<[DropdownMode, ContextButtonMode]> = [
+      ["full", "full"],
+      ["full", "icon"],
+      ["icon", "icon"],
+    ];
+    for (const [dropdownMode, contextButtonMode] of candidateModes) {
+      applyLayoutModes(dropdownMode, contextButtonMode);
+      if (!layoutHasIssues(dropdownMode, contextButtonMode)) {
+        return;
+      }
     }
   };
 
@@ -3735,10 +3940,34 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
     }
   };
 
+  const getReasoningLevelDisplayLabel = (
+    level: LLMReasoningLevel,
+    provider: ReasoningProviderKind,
+    modelName: string,
+    options: ReasoningOption[],
+  ): string => {
+    if (level !== "default") return level;
+    // Align UI wording with provider payload semantics in llmClient.ts:
+    // - DeepSeek: thinking.type = "enabled"
+    // - Kimi: reasoning is model-native (no separate level payload)
+    if (provider === "deepseek") {
+      return "enabled";
+    }
+    if (provider === "kimi") {
+      return "model";
+    }
+    // Keep "default" for providers with explicit level controls.
+    // (OpenAI reasoning_effort / Responses reasoning.effort, Gemini thinking_level/budget)
+    void modelName;
+    void options;
+    return "default";
+  };
+
   const getReasoningState = () => {
     if (!item) {
       return {
         provider: "unsupported" as const,
+        currentModel: "",
         options: [] as ReasoningOption[],
         enabledLevels: [] as LLMReasoningLevel[],
         selectedLevel: "none" as ReasoningLevelSelection,
@@ -3762,15 +3991,23 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       selectedLevel = "none";
     }
     selectedReasoningCache.set(item.id, selectedLevel);
-    return { provider, options, enabledLevels, selectedLevel };
+    return { provider, currentModel, options, enabledLevels, selectedLevel };
   };
 
   const updateReasoningButton = () => {
     if (!item || !reasoningBtn) return;
-    const { enabledLevels, selectedLevel } = getReasoningState();
+    const { provider, currentModel, options, enabledLevels, selectedLevel } =
+      getReasoningState();
     const available = enabledLevels.length > 0;
     const active = available && selectedLevel !== "none";
-    const reasoningLabel = active ? `${selectedLevel}` : "Reasoning";
+    const reasoningLabel = active
+      ? getReasoningLevelDisplayLabel(
+          selectedLevel as LLMReasoningLevel,
+          provider,
+          currentModel,
+          options,
+        )
+      : "Reasoning";
     reasoningBtn.disabled = !item || !available;
     reasoningBtn.classList.toggle("llm-reasoning-btn-unavailable", !available);
     reasoningBtn.classList.toggle("llm-reasoning-btn-active", active);
@@ -3787,7 +4024,8 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
 
   const rebuildReasoningMenu = () => {
     if (!item || !reasoningMenu) return;
-    const { options, selectedLevel } = getReasoningState();
+    const { provider, currentModel, options, selectedLevel } =
+      getReasoningState();
     reasoningMenu.innerHTML = "";
     for (const optionState of options) {
       const level = optionState.level;
@@ -3797,7 +4035,15 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
         "llm-reasoning-option",
         {
           type: "button",
-          textContent: selectedLevel === level ? `\u2713 ${level}` : level,
+          textContent:
+            selectedLevel === level
+              ? `\u2713 ${getReasoningLevelDisplayLabel(level, provider, currentModel, options)}`
+              : getReasoningLevelDisplayLabel(
+                  level,
+                  provider,
+                  currentModel,
+                  options,
+                ),
         },
       );
       if (optionState.enabled) {
@@ -3846,6 +4092,8 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       applyResponsiveActionButtonsLayout();
     });
     ro.observe(panelRoot);
+    if (actionsRow) ro.observe(actionsRow);
+    if (actionsLeft) ro.observe(actionsLeft);
   }
 
   const getSelectedProfile = () => {
