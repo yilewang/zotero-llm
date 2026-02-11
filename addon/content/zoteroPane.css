@@ -1005,6 +1005,15 @@
   padding-right: calc(1.1em + 10px);
 }
 
+.llm-model-btn.llm-model-btn-wrap-2line:not(.llm-model-btn-collapsed) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.1;
+  max-height: calc(2.2em + 12px);
+  text-overflow: clip;
+}
+
 .llm-action-slot.llm-model-dropdown > .llm-model-btn.llm-model-btn-collapsed {
   width: 52px;
   min-width: 52px;

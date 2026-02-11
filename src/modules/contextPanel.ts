@@ -41,7 +41,7 @@ const MAX_HISTORY_MESSAGES = 12;
 const PERSISTED_HISTORY_LIMIT = 200;
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 64;
-const FONT_SCALE_DEFAULT_PERCENT = 100;
+const FONT_SCALE_DEFAULT_PERCENT = 120;
 const FONT_SCALE_MIN_PERCENT = 80;
 const FONT_SCALE_MAX_PERCENT = 180;
 const FONT_SCALE_STEP_PERCENT = 10;
@@ -58,6 +58,8 @@ const ACTION_LAYOUT_FULL_MODE_BUFFER_PX = 8;
 const ACTION_LAYOUT_PARTIAL_MODE_BUFFER_PX = 0;
 const ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX = 36;
 const ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX = 52;
+const ACTION_LAYOUT_MODEL_WRAP_MIN_CHARS = 12;
+const ACTION_LAYOUT_MODEL_FULL_MAX_LINES = 2;
 const CUSTOM_SHORTCUT_ID_PREFIX = "custom-shortcut";
 
 const BUILTIN_SHORTCUT_FILES = [
@@ -3630,6 +3632,9 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   const applyResponsiveActionButtonsLayout = () => {
     if (!modelBtn) return;
     const modelLabel = modelBtn.dataset.modelLabel || "default";
+    const modelShouldWrap =
+      [...(modelLabel || "").trim()].length >
+      ACTION_LAYOUT_MODEL_WRAP_MIN_CHARS;
     const modelHint = modelBtn.dataset.modelHint || "";
     const reasoningLabel =
       reasoningBtn?.dataset.reasoningLabel ||
@@ -3710,11 +3715,31 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
     const getButtonNaturalWidth = (
       button: HTMLButtonElement | null,
       label: string,
+      maxLines = 1,
     ) => {
       if (!button) return 0;
       const view = body.ownerDocument?.defaultView;
       const style = view?.getComputedStyle(button);
       const textWidth = measureLabelTextWidth(button, label);
+      const normalizedMaxLines = Math.max(1, Math.floor(maxLines));
+      const wrappedTextWidth =
+        normalizedMaxLines > 1
+          ? (() => {
+              // Keep enough width for the longest segment while allowing
+              // balanced two-line wrapping for long model names.
+              const segments = label
+                .split(/[\s._-]+/g)
+                .map((segment) => segment.trim())
+                .filter(Boolean);
+              const longestSegmentWidth = segments.reduce((max, segment) => {
+                return Math.max(max, measureLabelTextWidth(button, segment));
+              }, 0);
+              return Math.max(
+                textWidth / normalizedMaxLines,
+                longestSegmentWidth,
+              );
+            })()
+          : textWidth;
       const paddingWidth =
         getComputedSizePx(style, "padding-left") +
         getComputedSizePx(style, "padding-right");
@@ -3724,7 +3749,7 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       const chevronAllowance =
         button === modelBtn || button === reasoningBtn ? 4 : 0;
       const measuredWidth =
-        textWidth + paddingWidth + borderWidth + chevronAllowance;
+        wrappedTextWidth + paddingWidth + borderWidth + chevronAllowance;
       // Use text-metric width instead of current rendered width so thresholding
       // does not become stricter just because buttons are currently expanded.
       return Math.ceil(measuredWidth);
@@ -3747,9 +3772,10 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       slot: HTMLElement | null,
       button: HTMLButtonElement | null,
       label: string,
+      maxLines = 1,
     ) => {
       if (!button) return 0;
-      const naturalWidth = getButtonNaturalWidth(button, label);
+      const naturalWidth = getButtonNaturalWidth(button, label, maxLines);
       if (!slot) return naturalWidth;
       const { minWidth, maxWidth } = getSlotWidthBounds(slot);
       return Math.min(maxWidth, Math.max(minWidth, naturalWidth));
@@ -3780,7 +3806,12 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
             ? ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX
             : 0,
         dropdownMode === "full"
-          ? getFullSlotRequiredWidth(modelSlot, modelBtn, modelLabel)
+          ? getFullSlotRequiredWidth(
+              modelSlot,
+              modelBtn,
+              modelLabel,
+              modelShouldWrap ? ACTION_LAYOUT_MODEL_FULL_MAX_LINES : 1,
+            )
           : modelBtn
             ? ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX
             : 0,
@@ -3851,6 +3882,10 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
       modelSlot?.classList.remove("llm-model-dropdown-collapsed");
       reasoningBtn?.classList.remove("llm-reasoning-btn-collapsed");
       reasoningSlot?.classList.remove("llm-reasoning-dropdown-collapsed");
+      modelBtn.classList.toggle(
+        "llm-model-btn-wrap-2line",
+        modelShouldWrap && dropdownMode !== "icon",
+      );
       modelBtn.textContent = modelLabel;
       modelBtn.title = modelHint;
       if (reasoningBtn) {
@@ -3910,19 +3945,20 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
 
   const rebuildModelMenu = () => {
     if (!item || !modelMenu) return;
-    const { choices } = getModelChoices();
-    const selected = selectedModelCache.get(item.id) || "primary";
+    const { choices, selected } = getSelectedModelInfo();
 
     modelMenu.innerHTML = "";
     for (const entry of choices) {
-      if (entry.key === selected) continue;
+      const isSelected = entry.key === selected;
       const option = createElement(
         body.ownerDocument as Document,
         "button",
         "llm-model-option",
         {
           type: "button",
-          textContent: entry.model || "default",
+          textContent: isSelected
+            ? `\u2713 ${entry.model || "default"}`
+            : entry.model || "default",
         },
       );
       const applyModelSelection = (e: Event) => {
