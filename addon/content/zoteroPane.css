@@ -751,7 +751,7 @@
 .llm-actions-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -761,26 +761,27 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
   flex: 0 0 auto;
   min-width: 0;
 }
 
 .llm-action-slot.llm-model-dropdown {
-  flex: 1 1 160px;
-  min-width: 84px;
-  max-width: 220px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(220px * var(--llm-font-scale));
 }
 
 .llm-action-slot.llm-reasoning-dropdown {
-  flex: 1 1 132px;
-  min-width: 84px;
-  max-width: 160px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(160px * var(--llm-font-scale));
 }
 
 .llm-action-slot.llm-model-dropdown > button,
 .llm-action-slot.llm-reasoning-dropdown > button {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
 }
 
 .llm-action-slot.llm-model-dropdown.llm-model-dropdown-collapsed {
@@ -806,6 +807,12 @@
 .llm-actions .llm-shortcut-btn {
   min-height: var(--llm-action-height);
   padding: 0 14px;
+}
+
+.llm-actions .llm-select-text-btn,
+.llm-actions .llm-screenshot-btn {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .llm-action-btn {
@@ -975,9 +982,9 @@
 
 .llm-model-btn,
 .llm-reasoning-btn {
-  width: 100%;
+  width: auto;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   white-space: nowrap;
   line-height: 1;
   text-align: center;
@@ -994,7 +1001,8 @@
   padding-top: 6px;
   padding-bottom: 6px;
   padding-left: 12px;
-  padding-right: 26px;
+  /* Reserve chevron space proportionally as font scales up */
+  padding-right: calc(1.1em + 10px);
 }
 
 .llm-action-slot.llm-model-dropdown > .llm-model-btn.llm-model-btn-collapsed {

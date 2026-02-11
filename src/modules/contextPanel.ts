@@ -55,6 +55,7 @@ const SCREENSHOT_EXPANDED_LABEL = "Screenshots";
 const SCREENSHOT_COMPACT_LABEL = "📷";
 const REASONING_COMPACT_LABEL = "💭";
 const ACTION_LAYOUT_FULL_MODE_BUFFER_PX = 8;
+const ACTION_LAYOUT_PARTIAL_MODE_BUFFER_PX = 0;
 const ACTION_LAYOUT_CONTEXT_ICON_WIDTH_PX = 36;
 const ACTION_LAYOUT_DROPDOWN_ICON_WIDTH_PX = 52;
 const CUSTOM_SHORTCUT_ID_PREFIX = "custom-shortcut";
@@ -3818,9 +3819,11 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
         contextButtonMode,
       );
       const modeBuffer =
-        dropdownMode === "icon" && contextButtonMode === "icon"
-          ? 0
-          : ACTION_LAYOUT_FULL_MODE_BUFFER_PX;
+        dropdownMode === "full" && contextButtonMode === "full"
+          ? ACTION_LAYOUT_FULL_MODE_BUFFER_PX
+          : dropdownMode === "full" && contextButtonMode === "icon"
+            ? ACTION_LAYOUT_PARTIAL_MODE_BUFFER_PX
+            : 0;
       return getAvailableRowWidth() + 1 >= modeRequiredWidth + modeBuffer;
     };
 
