@@ -90,6 +90,9 @@ type ReasoningProviderKind =
   | "gemini"
   | "deepseek"
   | "kimi"
+  | "qwen"
+  | "grok"
+  | "anthropic"
   | "unsupported";
 type ReasoningLevelSelection = "none" | LLMReasoningLevel;
 type ReasoningOption = {
@@ -107,10 +110,15 @@ type ActionDropdownSpec = {
   menuClassName: string;
   disabled?: boolean;
 };
-type ModelProfileKey = "primary" | "secondary";
+type ModelProfileKey = "primary" | "secondary" | "tertiary" | "quaternary";
 type AdvancedModelParams = {
   temperature: number;
   maxTokens: number;
+};
+type ApiProfile = {
+  apiBase: string;
+  apiKey: string;
+  model: string;
 };
 type CustomShortcut = {
   id: string;
@@ -129,7 +137,7 @@ type ResolvedContextSource = {
 const chatHistory = new Map<number, Message[]>();
 const loadedConversationKeys = new Set<number>();
 const loadingConversationTasks = new Map<number, Promise<void>>();
-const selectedModelCache = new Map<number, "primary" | "secondary">();
+const selectedModelCache = new Map<number, ModelProfileKey>();
 const selectedReasoningCache = new Map<number, ReasoningLevelSelection>();
 type PdfContext = {
   title: string;
@@ -227,6 +235,20 @@ const STOPWORDS = new Set([
   "et",
   "al",
 ]);
+
+const MODEL_PROFILE_ORDER: ModelProfileKey[] = [
+  "primary",
+  "secondary",
+  "tertiary",
+  "quaternary",
+];
+
+const MODEL_PROFILE_SUFFIX: Record<ModelProfileKey, string> = {
+  primary: "Primary",
+  secondary: "Secondary",
+  tertiary: "Tertiary",
+  quaternary: "Quaternary",
+};
 
 // =============================================================================
 // Utilities
@@ -360,12 +382,17 @@ function detectReasoningProvider(modelName: string): ReasoningProviderKind {
   if (name.startsWith("deepseek")) {
     return "deepseek";
   }
-  if (
-    name === "kimi-k2.5" ||
-    name === "kimi-k2-thinking" ||
-    name === "kimi-k2-thinking-turbo"
-  ) {
+  if (name.startsWith("kimi")) {
     return "kimi";
+  }
+  if (/(^|[/:])(?:qwen(?:\d+)?|qwq|qvq)(?:\b|[.-])/.test(name)) {
+    return "qwen";
+  }
+  if (/(^|[/:])grok(?:\b|[.-])/.test(name)) {
+    return "grok";
+  }
+  if (/(^|[/:])claude(?:\b|[.-])/.test(name)) {
+    return "anthropic";
   }
   if (name.includes("gemini")) return "gemini";
   if (/^(gpt-5|o\d)(\b|[.-])/.test(name)) return "openai";
@@ -2375,33 +2402,38 @@ function normalizeMaxTokensPref(raw: string): number {
   return Math.min(value, MAX_ALLOWED_TOKENS);
 }
 
-function getApiProfiles(): {
-  primary: { apiBase: string; apiKey: string; model: string };
-  secondary: { apiBase: string; apiKey: string; model: string };
-} {
-  const primary = {
+function getApiProfiles(): Record<ModelProfileKey, ApiProfile> {
+  const primary: ApiProfile = {
     apiBase: getStringPref("apiBasePrimary") || getStringPref("apiBase") || "",
     apiKey: getStringPref("apiKeyPrimary") || getStringPref("apiKey") || "",
     model:
       getStringPref("modelPrimary") || getStringPref("model") || "gpt-4o-mini",
   };
-  const secondary = {
-    apiBase: getStringPref("apiBaseSecondary") || "",
-    apiKey: getStringPref("apiKeySecondary") || "",
-    model: getStringPref("modelSecondary") || "",
-  };
-  return {
+
+  const profiles: Record<ModelProfileKey, ApiProfile> = {
     primary: {
       apiBase: primary.apiBase.trim(),
       apiKey: primary.apiKey.trim(),
       model: primary.model.trim(),
     },
     secondary: {
-      apiBase: secondary.apiBase.trim(),
-      apiKey: secondary.apiKey.trim(),
-      model: secondary.model.trim(),
+      apiBase: getStringPref("apiBaseSecondary").trim(),
+      apiKey: getStringPref("apiKeySecondary").trim(),
+      model: getStringPref("modelSecondary").trim(),
+    },
+    tertiary: {
+      apiBase: getStringPref("apiBaseTertiary").trim(),
+      apiKey: getStringPref("apiKeyTertiary").trim(),
+      model: getStringPref("modelTertiary").trim(),
+    },
+    quaternary: {
+      apiBase: getStringPref("apiBaseQuaternary").trim(),
+      apiKey: getStringPref("apiKeyQuaternary").trim(),
+      model: getStringPref("modelQuaternary").trim(),
     },
   };
+
+  return profiles;
 }
 
 function getSelectedProfileForItem(itemId: number): {
@@ -2410,18 +2442,18 @@ function getSelectedProfileForItem(itemId: number): {
   apiKey: string;
   model: string;
 } {
-  const { primary, secondary } = getApiProfiles();
+  const profiles = getApiProfiles();
   const selected = selectedModelCache.get(itemId) || "primary";
-  if (selected === "secondary" && secondary.model) {
-    return { key: "secondary", ...secondary };
+  if (selected !== "primary" && profiles[selected].model) {
+    return { key: selected, ...profiles[selected] };
   }
-  return { key: "primary", ...primary };
+  return { key: "primary", ...profiles.primary };
 }
 
 function getAdvancedModelParamsForProfile(
   profileKey: ModelProfileKey,
 ): AdvancedModelParams {
-  const suffix = profileKey === "secondary" ? "Secondary" : "Primary";
+  const suffix = MODEL_PROFILE_SUFFIX[profileKey];
   return {
     temperature: normalizeTemperaturePref(
       getStringPref(`temperature${suffix}`),
@@ -3560,21 +3592,30 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
   };
 
   const getModelChoices = () => {
-    const { primary, secondary } = getApiProfiles();
+    const profiles = getApiProfiles();
     const normalize = (value: string) =>
       value.trim().replace(/\s+/g, " ").toLowerCase();
-    const primaryModel = (primary.model || "default").trim() || "default";
-    const secondaryModel = (secondary.model || "").trim();
-    const choices: Array<{ key: "primary" | "secondary"; model: string }> = [
-      { key: "primary", model: primaryModel },
-    ];
-    if (
-      secondaryModel &&
-      normalize(secondaryModel) !== normalize(primaryModel)
-    ) {
-      choices.push({ key: "secondary", model: secondaryModel });
+    const primaryModel =
+      (profiles.primary.model || "default").trim() || "default";
+    const choices: Array<{ key: ModelProfileKey; model: string }> = [];
+    const seenModels = new Set<string>();
+
+    for (const key of MODEL_PROFILE_ORDER) {
+      const model = (
+        key === "primary" ? primaryModel : profiles[key].model
+      ).trim();
+      if (!model) continue;
+      const normalized = normalize(model);
+      if (seenModels.has(normalized)) continue;
+      seenModels.add(normalized);
+      choices.push({ key, model });
     }
-    return { primary, secondary, choices };
+
+    if (!choices.length) {
+      choices.push({ key: "primary", model: primaryModel });
+    }
+
+    return { profiles, choices };
   };
 
   const getSelectedModelInfo = () => {
@@ -4174,12 +4215,7 @@ function setupHandlers(body: Element, item?: Zotero.Item | null) {
 
   const getSelectedProfile = () => {
     if (!item) return null;
-    const { primary, secondary } = getApiProfiles();
-    const { selected } = getSelectedModelInfo();
-    if (selected === "secondary" && secondary.model) {
-      return { key: "secondary" as const, ...secondary };
-    }
-    return { key: "primary" as const, ...primary };
+    return getSelectedProfileForItem(item.id);
   };
 
   const getAdvancedModelParams = (

@@ -1,4 +1,13 @@
-export type ReasoningProvider = "openai" | "gemini" | "deepseek" | "kimi";
+export const REASONING_PROFILE_TABLE_VERSION = 6;
+
+export type ReasoningProvider =
+  | "openai"
+  | "gemini"
+  | "deepseek"
+  | "kimi"
+  | "qwen"
+  | "grok"
+  | "anthropic";
 export type ReasoningLevel =
   | "default"
   | "minimal"
@@ -17,7 +26,7 @@ export type OpenAIReasoningEffort =
 export type GeminiThinkingParam = "thinking_level" | "thinking_budget";
 export type GeminiThinkingValue = "low" | "medium" | "high" | number;
 export type GeminiReasoningOption = {
-  level: "low" | "medium" | "high";
+  level: ReasoningLevel;
   value: GeminiThinkingValue;
 };
 export type RuntimeReasoningOption = {
@@ -38,6 +47,16 @@ export type GeminiReasoningProfile = {
   levelToValue: Partial<Record<ReasoningLevel, GeminiThinkingValue>>;
   defaultLevel: ReasoningLevel;
 };
+export type AnthropicReasoningProfile = {
+  defaultBudgetTokens: number;
+  levelToBudgetTokens: Partial<Record<ReasoningLevel, number>>;
+  defaultLevel: ReasoningLevel;
+};
+export type QwenReasoningProfile = {
+  defaultEnableThinking: boolean | null;
+  levelToEnableThinking: Partial<Record<ReasoningLevel, boolean | null>>;
+  defaultLevel: ReasoningLevel;
+};
 
 type ProviderProfile = {
   supportsReasoning: boolean;
@@ -54,6 +73,14 @@ type ProviderProfile = {
     defaultValue: GeminiThinkingValue;
     levelToValue: Partial<Record<ReasoningLevel, GeminiThinkingValue>>;
   };
+  anthropic?: {
+    defaultBudgetTokens: number;
+    levelToBudgetTokens: Partial<Record<ReasoningLevel, number>>;
+  };
+  qwen?: {
+    defaultEnableThinking: boolean | null;
+    levelToEnableThinking: Partial<Record<ReasoningLevel, boolean | null>>;
+  };
   deepseekThinkingEnabled?: boolean;
 };
 
@@ -68,6 +95,36 @@ const option = (
 ): RuntimeReasoningOption => {
   return { level, label, enabled: true };
 };
+
+function singleEnabledOptionProfile(
+  level: ReasoningLevel,
+  label: string,
+  extras: Omit<
+    Partial<ProviderProfile>,
+    "supportsReasoning" | "defaultLevel" | "options"
+  > = {},
+): ProviderProfile {
+  return {
+    supportsReasoning: true,
+    defaultLevel: level,
+    options: [option(level, label)],
+    ...extras,
+  };
+}
+
+function getResolvedDefaultLevel(
+  provider: ReasoningProvider,
+  modelName: string | undefined,
+  fallback: ReasoningLevel,
+): ReasoningLevel {
+  return getReasoningDefaultLevelForModel(provider, modelName) || fallback;
+}
+
+function cloneLevelMap<T>(
+  levelMap?: Partial<Record<ReasoningLevel, T>>,
+): Partial<Record<ReasoningLevel, T>> {
+  return { ...(levelMap || {}) };
+}
 
 const OPENAI_GPT5_PROFILE: ProviderProfile = {
   supportsReasoning: true,
@@ -89,6 +146,51 @@ const OPENAI_GPT5_PROFILE: ProviderProfile = {
   },
 };
 
+const OPENAI_GPT52_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "default"),
+    option("low", "low"),
+    option("medium", "medium"),
+    option("high", "high"),
+    option("xhigh", "xhigh"),
+  ],
+  openai: {
+    defaultEffort: "default",
+    levelToEffort: {
+      default: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+    },
+  },
+};
+
+const GROK_3_MINI_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "default"),
+    option("low", "low"),
+    option("high", "high"),
+  ],
+  openai: {
+    defaultEffort: "default",
+    levelToEffort: {
+      default: null,
+      low: "low",
+      high: "high",
+    },
+  },
+};
+
+const GROK_REASONING_PROFILE: ProviderProfile = singleEnabledOptionProfile(
+  "default",
+  "enabled",
+);
+
 const GEMINI_3_PRO_PROFILE: ProviderProfile = {
   supportsReasoning: true,
   defaultLevel: "high",
@@ -99,6 +201,67 @@ const GEMINI_3_PRO_PROFILE: ProviderProfile = {
     levelToValue: {
       high: "high",
       low: "low",
+    },
+  },
+};
+
+const GEMINI_25_PRO_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "dynamic (-1)"),
+    option("low", "128"),
+    option("high", "32768"),
+  ],
+  gemini: {
+    param: "thinking_budget",
+    defaultValue: -1,
+    levelToValue: {
+      default: -1,
+      low: 128,
+      high: 32768,
+    },
+  },
+};
+
+const GEMINI_25_FLASH_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "dynamic (-1)"),
+    option("minimal", "off (0)"),
+    option("low", "1"),
+    option("high", "24576"),
+  ],
+  gemini: {
+    param: "thinking_budget",
+    defaultValue: -1,
+    levelToValue: {
+      default: -1,
+      minimal: 0,
+      low: 1,
+      high: 24576,
+    },
+  },
+};
+
+const GEMINI_25_FLASH_LITE_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "off (0)"),
+    option("minimal", "dynamic (-1)"),
+    option("low", "512"),
+    option("high", "24576"),
+  ],
+  gemini: {
+    param: "thinking_budget",
+    defaultValue: 0,
+    levelToValue: {
+      default: 0,
+      minimal: -1,
+      low: 512,
+      high: 24576,
     },
   },
 };
@@ -122,12 +285,13 @@ const GEMINI_GENERIC_PROFILE: ProviderProfile = {
   },
 };
 
-const DEEPSEEK_REASONER_PROFILE: ProviderProfile = {
-  supportsReasoning: true,
-  defaultLevel: "default",
-  options: [option("default", "enabled")],
-  deepseekThinkingEnabled: true,
-};
+const DEEPSEEK_REASONER_PROFILE: ProviderProfile = singleEnabledOptionProfile(
+  "default",
+  "enabled",
+  {
+    deepseekThinkingEnabled: true,
+  },
+);
 
 const DEEPSEEK_CHAT_PROFILE: ProviderProfile = {
   supportsReasoning: false,
@@ -135,10 +299,67 @@ const DEEPSEEK_CHAT_PROFILE: ProviderProfile = {
   options: [],
 };
 
-const KIMI_THINKING_PROFILE: ProviderProfile = {
+const KIMI_THINKING_PROFILE: ProviderProfile = singleEnabledOptionProfile(
+  "default",
+  "enabled",
+);
+
+const QWEN_TOGGLE_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "default"),
+    option("high", "enabled"),
+    option("low", "disabled"),
+  ],
+  qwen: {
+    defaultEnableThinking: null,
+    levelToEnableThinking: {
+      default: null,
+      high: true,
+      low: false,
+    },
+  },
+};
+
+const QWEN_THINKING_ONLY_PROFILE: ProviderProfile = {
   supportsReasoning: true,
   defaultLevel: "default",
   options: [option("default", "enabled")],
+  qwen: {
+    defaultEnableThinking: true,
+    levelToEnableThinking: {
+      default: true,
+    },
+  },
+};
+
+const QWEN_NON_THINKING_ONLY_PROFILE: ProviderProfile = {
+  supportsReasoning: false,
+  defaultLevel: null,
+  options: [],
+  qwen: {
+    defaultEnableThinking: false,
+    levelToEnableThinking: {},
+  },
+};
+
+const ANTHROPIC_THINKING_PROFILE: ProviderProfile = {
+  supportsReasoning: true,
+  defaultLevel: "default",
+  options: [
+    option("default", "2000"),
+    option("low", "1024"),
+    option("high", "10000"),
+  ],
+  anthropic: {
+    defaultBudgetTokens: 2000,
+    levelToBudgetTokens: {
+      default: 2000,
+      low: 1024,
+      high: 10000,
+    },
+  },
 };
 
 const UNSUPPORTED_PROFILE: ProviderProfile = {
@@ -154,6 +375,10 @@ const PROFILE_RULES: Record<
   openai: {
     rules: [
       {
+        match: /^gpt-5\.2(?:\b|[.-])/,
+        profile: OPENAI_GPT52_PROFILE,
+      },
+      {
         match: /^(gpt-5(?:\b|[.-])|o\d+(?:\b|[.-]))/,
         profile: OPENAI_GPT5_PROFILE,
       },
@@ -163,7 +388,23 @@ const PROFILE_RULES: Record<
   gemini: {
     rules: [
       {
-        match: /^gemini-3-pro(?:\b|[.-])/,
+        match: /(^|[/:])gemini-2\.5-pro(?:\b|[.-])/,
+        profile: GEMINI_25_PRO_PROFILE,
+      },
+      {
+        match: /(^|[/:])gemini-2\.5-flash-lite(?:\b|[.-])/,
+        profile: GEMINI_25_FLASH_LITE_PROFILE,
+      },
+      {
+        match: /(^|[/:])gemini-2\.5-flash(?:\b|[.-])/,
+        profile: GEMINI_25_FLASH_PROFILE,
+      },
+      {
+        match: /(^|[/:])gemini-2\.5(?:\b|[.-])/,
+        profile: GEMINI_25_FLASH_PROFILE,
+      },
+      {
+        match: /(^|[/:])gemini-3-pro(?:\b|[.-])/,
         profile: GEMINI_3_PRO_PROFILE,
       },
       {
@@ -189,11 +430,54 @@ const PROFILE_RULES: Record<
   kimi: {
     rules: [
       {
-        match: /^kimi-k2-thinking(?:-turbo)?$/,
+        match: /^kimi-k2(?:\.5)?(?:-thinking(?:-turbo)?)?(?:\b|[.-])/,
+        profile: KIMI_THINKING_PROFILE,
+      },
+      {
+        match: /^kimi(?:\b|[.-])/,
         profile: KIMI_THINKING_PROFILE,
       },
     ],
-    fallback: UNSUPPORTED_PROFILE,
+    fallback: KIMI_THINKING_PROFILE,
+  },
+  qwen: {
+    rules: [
+      {
+        match: /(^|[/:])qwen3-[\w.-]*instruct-2507(?:\b|[.-])/,
+        profile: QWEN_NON_THINKING_ONLY_PROFILE,
+      },
+      {
+        match: /(^|[/:])(?:qwen3-[\w.-]*thinking-2507|qwq)(?:\b|[.-])/,
+        profile: QWEN_THINKING_ONLY_PROFILE,
+      },
+      {
+        match: /(^|[/:])qwen(?:\d+)?(?:\b|[.-])/,
+        profile: QWEN_TOGGLE_PROFILE,
+      },
+    ],
+    fallback: QWEN_TOGGLE_PROFILE,
+  },
+  grok: {
+    rules: [
+      {
+        match: /^grok-3-mini(?:\b|[.-])/,
+        profile: GROK_3_MINI_PROFILE,
+      },
+      {
+        match: /(^|[/:])grok(?:\b|[.-])/,
+        profile: GROK_REASONING_PROFILE,
+      },
+    ],
+    fallback: GROK_REASONING_PROFILE,
+  },
+  anthropic: {
+    rules: [
+      {
+        match: /(^|[/:])claude(?:\b|[.-])/,
+        profile: ANTHROPIC_THINKING_PROFILE,
+      },
+    ],
+    fallback: ANTHROPIC_THINKING_PROFILE,
   },
 };
 
@@ -205,8 +489,6 @@ const OPENAI_EFFORT_ORDER: OpenAIReasoningEffort[] = [
   "high",
   "xhigh",
 ];
-
-export const REASONING_PROFILE_TABLE_VERSION = 1;
 
 function normalizeModelName(modelName?: string): string {
   return (modelName || "").trim().toLowerCase();
@@ -279,13 +561,25 @@ export function shouldUseDeepseekThinkingPayload(modelName?: string): boolean {
 export function getOpenAIReasoningProfileForModel(
   modelName?: string,
 ): OpenAIReasoningProfile {
-  const profile = resolveProviderProfile("openai", modelName);
-  const openaiProfile = profile.openai || OPENAI_GPT5_PROFILE.openai;
-  const defaultLevel =
-    getReasoningDefaultLevelForModel("openai", modelName) || "default";
-  const levelToEffort = {
-    ...(openaiProfile?.levelToEffort || {}),
-  };
+  return getReasoningEffortProfileForModel("openai", modelName);
+}
+
+export function getGrokReasoningProfileForModel(
+  modelName?: string,
+): OpenAIReasoningProfile {
+  return getReasoningEffortProfileForModel("grok", modelName);
+}
+
+function getReasoningEffortProfileForModel(
+  provider: "openai" | "grok",
+  modelName?: string,
+): OpenAIReasoningProfile {
+  const profile = resolveProviderProfile(provider, modelName);
+  const fallbackOpenAIProfile =
+    provider === "openai" ? OPENAI_GPT5_PROFILE.openai : undefined;
+  const openaiProfile = profile.openai || fallbackOpenAIProfile;
+  const defaultLevel = getResolvedDefaultLevel(provider, modelName, "default");
+  const levelToEffort = cloneLevelMap(openaiProfile?.levelToEffort);
   const supportedEfforts = OPENAI_EFFORT_ORDER.filter((effort) => {
     return Object.values(levelToEffort).includes(effort);
   });
@@ -297,38 +591,64 @@ export function getOpenAIReasoningProfileForModel(
   };
 }
 
+export function getAnthropicReasoningProfileForModel(
+  modelName?: string,
+): AnthropicReasoningProfile {
+  const profile = resolveProviderProfile("anthropic", modelName);
+  const anthropicProfile =
+    profile.anthropic || ANTHROPIC_THINKING_PROFILE.anthropic;
+  const defaultLevel = getResolvedDefaultLevel(
+    "anthropic",
+    modelName,
+    "default",
+  );
+  return {
+    defaultBudgetTokens: anthropicProfile?.defaultBudgetTokens || 2000,
+    levelToBudgetTokens: cloneLevelMap(anthropicProfile?.levelToBudgetTokens),
+    defaultLevel,
+  };
+}
+
+export function getQwenReasoningProfileForModel(
+  modelName?: string,
+): QwenReasoningProfile {
+  const profile = resolveProviderProfile("qwen", modelName);
+  const qwenProfile = profile.qwen || QWEN_TOGGLE_PROFILE.qwen;
+  const defaultLevel = getResolvedDefaultLevel("qwen", modelName, "default");
+  return {
+    defaultEnableThinking: qwenProfile?.defaultEnableThinking ?? null,
+    levelToEnableThinking: cloneLevelMap(qwenProfile?.levelToEnableThinking),
+    defaultLevel,
+  };
+}
+
 export function getGeminiReasoningProfileForModel(
   modelName?: string,
 ): GeminiReasoningProfile {
   const profile = resolveProviderProfile("gemini", modelName);
   const geminiProfile = profile.gemini || GEMINI_GENERIC_PROFILE.gemini;
-  const defaultLevel =
-    getReasoningDefaultLevelForModel("gemini", modelName) || "medium";
-  const levelToValue = {
-    ...(geminiProfile?.levelToValue || {}),
-  };
+  const defaultLevel = getResolvedDefaultLevel("gemini", modelName, "medium");
+  const levelToValue = cloneLevelMap(geminiProfile?.levelToValue);
   const options: GeminiReasoningOption[] = profile.options
-    .filter(
-      (
-        optionState,
-      ): optionState is RuntimeReasoningOption & {
-        level: "low" | "medium" | "high";
-      } =>
-        optionState.enabled &&
-        (optionState.level === "low" ||
-          optionState.level === "medium" ||
-          optionState.level === "high"),
-    )
+    .filter((optionState) => optionState.enabled)
     .map((optionState) => {
-      const value = levelToValue[optionState.level] ?? optionState.level;
+      const mappedValue = levelToValue[optionState.level];
+      const value =
+        mappedValue !== undefined
+          ? mappedValue
+          : optionState.level === "low" ||
+              optionState.level === "medium" ||
+              optionState.level === "high"
+            ? optionState.level
+            : (geminiProfile?.defaultValue ?? "medium");
       return {
         level: optionState.level,
         value,
       };
     });
   return {
-    param: geminiProfile?.param || "thinking_level",
-    defaultValue: geminiProfile?.defaultValue || "medium",
+    param: geminiProfile?.param ?? "thinking_level",
+    defaultValue: geminiProfile?.defaultValue ?? "medium",
     options,
     levelToValue,
     defaultLevel,

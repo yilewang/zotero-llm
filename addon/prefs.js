@@ -8,3 +8,7 @@ pref("temperaturePrimary", "0.3");
 pref("maxTokensPrimary", "4096");
 pref("temperatureSecondary", "0.3");
 pref("maxTokensSecondary", "4096");
+pref("temperatureTertiary", "0.3");
+pref("maxTokensTertiary", "4096");
+pref("temperatureQuaternary", "0.3");
+pref("maxTokensQuaternary", "4096");

@@ -17,6 +17,10 @@ declare namespace _ZoteroTypes {
       "maxTokensPrimary": string;
       "temperatureSecondary": string;
       "maxTokensSecondary": string;
+      "temperatureTertiary": string;
+      "maxTokensTertiary": string;
+      "temperatureQuaternary": string;
+      "maxTokensQuaternary": string;
     };
   }
 }

@@ -15,18 +15,31 @@ type PrefKey =
   | "apiBaseSecondary"
   | "apiKeySecondary"
   | "modelSecondary"
+  | "apiBaseTertiary"
+  | "apiKeyTertiary"
+  | "modelTertiary"
+  | "apiBaseQuaternary"
+  | "apiKeyQuaternary"
+  | "modelQuaternary"
   | "systemPrompt"
   | "temperaturePrimary"
   | "maxTokensPrimary"
   | "temperatureSecondary"
-  | "maxTokensSecondary";
+  | "maxTokensSecondary"
+  | "temperatureTertiary"
+  | "maxTokensTertiary"
+  | "temperatureQuaternary"
+  | "maxTokensQuaternary";
 
-type ProfileKind = "primary" | "secondary";
+type ProfileKind = "primary" | "secondary" | "tertiary" | "quaternary";
 type ProfileConfig = {
   key: ProfileKind;
+  prefSuffix: "Primary" | "Secondary" | "Tertiary" | "Quaternary";
   title: string;
   modelPlaceholder: string;
   modelSuffixLabel: string;
+  defaultModel: string;
+  useLegacyFallback?: boolean;
 };
 
 const pref = (key: PrefKey) => `${config.prefsPrefix}.${key}`;
@@ -42,15 +55,36 @@ const setPref = (key: PrefKey, value: string) =>
 const PROFILE_CONFIGS: ProfileConfig[] = [
   {
     key: "primary",
+    prefSuffix: "Primary",
     title: "Model A",
     modelPlaceholder: "gpt-4o-mini",
     modelSuffixLabel: "Model A",
+    defaultModel: "gpt-4o-mini",
+    useLegacyFallback: true,
   },
   {
     key: "secondary",
+    prefSuffix: "Secondary",
     title: "Model B",
     modelPlaceholder: "gpt-4o",
     modelSuffixLabel: "Model B",
+    defaultModel: "",
+  },
+  {
+    key: "tertiary",
+    prefSuffix: "Tertiary",
+    title: "Model C",
+    modelPlaceholder: "gemini-2.5-pro",
+    modelSuffixLabel: "Model C",
+    defaultModel: "",
+  },
+  {
+    key: "quaternary",
+    prefSuffix: "Quaternary",
+    title: "Model D",
+    modelPlaceholder: "deepseek-reasoner",
+    modelSuffixLabel: "Model D",
+    defaultModel: "",
   },
 ];
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -243,6 +277,23 @@ function normalizeMaxTokens(value: string): string {
   return `${normalized}`;
 }
 
+type ProfileInputRefs = {
+  apiBaseInput: HTMLInputElement | null;
+  apiKeyInput: HTMLInputElement | null;
+  modelInput: HTMLInputElement | null;
+  temperatureInput: HTMLInputElement | null;
+  maxTokensInput: HTMLInputElement | null;
+  testButton: HTMLButtonElement | null;
+  testStatus: HTMLElement | null;
+};
+
+function getProfilePrefKey(
+  profile: ProfileConfig,
+  field: "apiBase" | "apiKey" | "model" | "temperature" | "maxTokens",
+): PrefKey {
+  return `${field}${profile.prefSuffix}` as PrefKey;
+}
+
 export async function registerPrefsScripts(_window: Window | undefined | null) {
   if (!_window) {
     ztoolkit.log("Preferences window not available");
@@ -256,95 +307,67 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
   renderModelSections(doc);
 
   // Populate fields with saved values
-  const apiBasePrimaryInput = doc.querySelector(
-    `#${config.addonRef}-api-base-primary`,
-  ) as HTMLInputElement | null;
-  const apiKeyPrimaryInput = doc.querySelector(
-    `#${config.addonRef}-api-key-primary`,
-  ) as HTMLInputElement | null;
-  const modelPrimaryInput = doc.querySelector(
-    `#${config.addonRef}-model-primary`,
-  ) as HTMLInputElement | null;
-  const apiBaseSecondaryInput = doc.querySelector(
-    `#${config.addonRef}-api-base-secondary`,
-  ) as HTMLInputElement | null;
-  const apiKeySecondaryInput = doc.querySelector(
-    `#${config.addonRef}-api-key-secondary`,
-  ) as HTMLInputElement | null;
-  const modelSecondaryInput = doc.querySelector(
-    `#${config.addonRef}-model-secondary`,
-  ) as HTMLInputElement | null;
   const systemPromptInput = doc.querySelector(
     `#${config.addonRef}-system-prompt`,
   ) as HTMLTextAreaElement | null;
-  const testButtonPrimary = doc.querySelector(
-    `#${config.addonRef}-test-button-primary`,
-  ) as HTMLButtonElement | null;
-  const testStatusPrimary = doc.querySelector(
-    `#${config.addonRef}-test-status-primary`,
-  ) as HTMLElement | null;
-  const testButtonSecondary = doc.querySelector(
-    `#${config.addonRef}-test-button-secondary`,
-  ) as HTMLButtonElement | null;
-  const testStatusSecondary = doc.querySelector(
-    `#${config.addonRef}-test-status-secondary`,
-  ) as HTMLElement | null;
-  const temperaturePrimaryInput = doc.querySelector(
-    `#${config.addonRef}-temperature-primary`,
-  ) as HTMLInputElement | null;
-  const maxTokensPrimaryInput = doc.querySelector(
-    `#${config.addonRef}-max-tokens-primary`,
-  ) as HTMLInputElement | null;
-  const temperatureSecondaryInput = doc.querySelector(
-    `#${config.addonRef}-temperature-secondary`,
-  ) as HTMLInputElement | null;
-  const maxTokensSecondaryInput = doc.querySelector(
-    `#${config.addonRef}-max-tokens-secondary`,
-  ) as HTMLInputElement | null;
+  const profileInputs = new Map<ProfileKind, ProfileInputRefs>();
 
-  if (apiBasePrimaryInput) {
-    apiBasePrimaryInput.value =
-      getPref("apiBasePrimary") || getPref("apiBase") || "";
-    apiBasePrimaryInput.addEventListener("input", () => {
-      setPref("apiBasePrimary", apiBasePrimaryInput.value);
-    });
-  }
+  for (const profile of PROFILE_CONFIGS) {
+    const refs: ProfileInputRefs = {
+      apiBaseInput: doc.querySelector(
+        `#${config.addonRef}-api-base-${profile.key}`,
+      ) as HTMLInputElement | null,
+      apiKeyInput: doc.querySelector(
+        `#${config.addonRef}-api-key-${profile.key}`,
+      ) as HTMLInputElement | null,
+      modelInput: doc.querySelector(
+        `#${config.addonRef}-model-${profile.key}`,
+      ) as HTMLInputElement | null,
+      temperatureInput: doc.querySelector(
+        `#${config.addonRef}-temperature-${profile.key}`,
+      ) as HTMLInputElement | null,
+      maxTokensInput: doc.querySelector(
+        `#${config.addonRef}-max-tokens-${profile.key}`,
+      ) as HTMLInputElement | null,
+      testButton: doc.querySelector(
+        `#${config.addonRef}-test-button-${profile.key}`,
+      ) as HTMLButtonElement | null,
+      testStatus: doc.querySelector(
+        `#${config.addonRef}-test-status-${profile.key}`,
+      ) as HTMLElement | null,
+    };
+    profileInputs.set(profile.key, refs);
 
-  if (apiKeyPrimaryInput) {
-    apiKeyPrimaryInput.value =
-      getPref("apiKeyPrimary") || getPref("apiKey") || "";
-    apiKeyPrimaryInput.addEventListener("input", () => {
-      setPref("apiKeyPrimary", apiKeyPrimaryInput.value);
-    });
-  }
+    const apiBaseKey = getProfilePrefKey(profile, "apiBase");
+    const apiKeyKey = getProfilePrefKey(profile, "apiKey");
+    const modelKey = getProfilePrefKey(profile, "model");
 
-  if (modelPrimaryInput) {
-    modelPrimaryInput.value =
-      getPref("modelPrimary") || getPref("model") || "gpt-4o-mini";
-    modelPrimaryInput.addEventListener("input", () => {
-      setPref("modelPrimary", modelPrimaryInput.value);
-    });
-  }
+    if (refs.apiBaseInput) {
+      refs.apiBaseInput.value = profile.useLegacyFallback
+        ? getPref(apiBaseKey) || getPref("apiBase") || ""
+        : getPref(apiBaseKey) || "";
+      refs.apiBaseInput.addEventListener("input", () => {
+        setPref(apiBaseKey, refs.apiBaseInput?.value || "");
+      });
+    }
 
-  if (apiBaseSecondaryInput) {
-    apiBaseSecondaryInput.value = getPref("apiBaseSecondary") || "";
-    apiBaseSecondaryInput.addEventListener("input", () => {
-      setPref("apiBaseSecondary", apiBaseSecondaryInput.value);
-    });
-  }
+    if (refs.apiKeyInput) {
+      refs.apiKeyInput.value = profile.useLegacyFallback
+        ? getPref(apiKeyKey) || getPref("apiKey") || ""
+        : getPref(apiKeyKey) || "";
+      refs.apiKeyInput.addEventListener("input", () => {
+        setPref(apiKeyKey, refs.apiKeyInput?.value || "");
+      });
+    }
 
-  if (apiKeySecondaryInput) {
-    apiKeySecondaryInput.value = getPref("apiKeySecondary") || "";
-    apiKeySecondaryInput.addEventListener("input", () => {
-      setPref("apiKeySecondary", apiKeySecondaryInput.value);
-    });
-  }
-
-  if (modelSecondaryInput) {
-    modelSecondaryInput.value = getPref("modelSecondary") || "";
-    modelSecondaryInput.addEventListener("input", () => {
-      setPref("modelSecondary", modelSecondaryInput.value);
-    });
+    if (refs.modelInput) {
+      refs.modelInput.value = profile.useLegacyFallback
+        ? getPref(modelKey) || getPref("model") || profile.defaultModel
+        : getPref(modelKey) || profile.defaultModel;
+      refs.modelInput.addEventListener("input", () => {
+        setPref(modelKey, refs.modelInput?.value || "");
+      });
+    }
   }
 
   if (systemPromptInput) {
@@ -355,15 +378,14 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
   }
 
   const setupAdvancedOptions = (
-    profile: ProfileKind,
+    profile: ProfileConfig,
     temperatureInput: HTMLInputElement | null,
     maxTokensInput: HTMLInputElement | null,
   ) => {
     if (!temperatureInput || !maxTokensInput) return;
 
-    const suffix = profile === "secondary" ? "Secondary" : "Primary";
-    const temperatureKey = `temperature${suffix}` as PrefKey;
-    const maxTokensKey = `maxTokens${suffix}` as PrefKey;
+    const temperatureKey = getProfilePrefKey(profile, "temperature");
+    const maxTokensKey = getProfilePrefKey(profile, "maxTokens");
 
     let savedTemperature = normalizeTemperature(
       getPref(temperatureKey) || `${DEFAULT_TEMPERATURE}`,
@@ -394,16 +416,14 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
     maxTokensInput.addEventListener("blur", commitMaxTokens);
   };
 
-  setupAdvancedOptions(
-    "primary",
-    temperaturePrimaryInput,
-    maxTokensPrimaryInput,
-  );
-  setupAdvancedOptions(
-    "secondary",
-    temperatureSecondaryInput,
-    maxTokensSecondaryInput,
-  );
+  for (const profile of PROFILE_CONFIGS) {
+    const refs = profileInputs.get(profile.key);
+    setupAdvancedOptions(
+      profile,
+      refs?.temperatureInput || null,
+      refs?.maxTokensInput || null,
+    );
+  }
 
   const attachTestHandler = (
     button: HTMLButtonElement | null,
@@ -540,15 +560,18 @@ export async function registerPrefsScripts(_window: Window | undefined | null) {
     button.addEventListener("command", runTest);
   };
 
-  attachTestHandler(testButtonPrimary, testStatusPrimary, () => ({
-    base: apiBasePrimaryInput?.value || "",
-    key: apiKeyPrimaryInput?.value || "",
-    model: modelPrimaryInput?.value || "gpt-4o-mini",
-  }));
-
-  attachTestHandler(testButtonSecondary, testStatusSecondary, () => ({
-    base: apiBaseSecondaryInput?.value || "",
-    key: apiKeySecondaryInput?.value || "",
-    model: modelSecondaryInput?.value || "",
-  }));
+  for (const profile of PROFILE_CONFIGS) {
+    const refs = profileInputs.get(profile.key);
+    attachTestHandler(
+      refs?.testButton || null,
+      refs?.testStatus || null,
+      () => ({
+        base: refs?.apiBaseInput?.value || "",
+        key: refs?.apiKeyInput?.value || "",
+        model:
+          refs?.modelInput?.value ||
+          (profile.useLegacyFallback ? profile.defaultModel : ""),
+      }),
+    );
+  }
 }

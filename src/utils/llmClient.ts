@@ -11,8 +11,11 @@ import {
   MAX_ALLOWED_TOKENS,
 } from "./llmDefaults";
 import {
+  getAnthropicReasoningProfileForModel,
   getGeminiReasoningProfileForModel,
+  getGrokReasoningProfileForModel,
   getOpenAIReasoningProfileForModel,
+  getQwenReasoningProfileForModel,
   getReasoningDefaultLevelForModel,
   getRuntimeReasoningOptionsForModel,
   shouldUseDeepseekThinkingPayload,
@@ -46,7 +49,14 @@ export type ChatMessage = {
   content: MessageContent;
 };
 
-export type ReasoningProvider = "openai" | "gemini" | "deepseek" | "kimi";
+export type ReasoningProvider =
+  | "openai"
+  | "gemini"
+  | "deepseek"
+  | "kimi"
+  | "qwen"
+  | "grok"
+  | "anthropic";
 export type ReasoningLevel =
   | "default"
   | "minimal"
@@ -75,7 +85,7 @@ export type OpenAIReasoningProfile = {
 export type GeminiThinkingParam = "thinking_level" | "thinking_budget";
 export type GeminiThinkingValue = "low" | "medium" | "high" | number;
 export type GeminiReasoningOption = {
-  level: "low" | "medium" | "high";
+  level: ReasoningLevel;
   value: GeminiThinkingValue;
 };
 export type GeminiReasoningProfile = {
@@ -83,6 +93,16 @@ export type GeminiReasoningProfile = {
   defaultValue: GeminiThinkingValue;
   options: GeminiReasoningOption[];
   levelToValue: Partial<Record<ReasoningLevel, GeminiThinkingValue>>;
+  defaultLevel: ReasoningLevel;
+};
+export type AnthropicReasoningProfile = {
+  defaultBudgetTokens: number;
+  levelToBudgetTokens: Partial<Record<ReasoningLevel, number>>;
+  defaultLevel: ReasoningLevel;
+};
+export type QwenReasoningProfile = {
+  defaultEnableThinking: boolean | null;
+  levelToEnableThinking: Partial<Record<ReasoningLevel, boolean | null>>;
   defaultLevel: ReasoningLevel;
 };
 export type RuntimeReasoningOption = {
@@ -457,6 +477,18 @@ const OPENAI_EFFORT_ORDER: OpenAIReasoningEffort[] = [
   "high",
   "xhigh",
 ];
+
+const REASONING_LEVEL_ALIAS_MAP: Partial<
+  Record<ReasoningLevel, ReasoningLevel>
+> = {
+  minimal: "low",
+  xhigh: "high",
+};
+
+function getReasoningLevelAlias(level: ReasoningLevel): ReasoningLevel | null {
+  return REASONING_LEVEL_ALIAS_MAP[level] || null;
+}
+
 export function getRuntimeReasoningOptions(params: {
   provider: ReasoningProvider;
   modelName?: string;
@@ -474,6 +506,14 @@ export function getOpenAIReasoningProfile(
   return getOpenAIReasoningProfileForModel(modelName);
 }
 
+export function getGrokReasoningProfile(
+  modelName?: string,
+  apiBase?: string,
+): OpenAIReasoningProfile {
+  void apiBase;
+  return getGrokReasoningProfileForModel(modelName);
+}
+
 export function getGeminiReasoningProfile(
   modelName?: string,
   apiBase?: string,
@@ -482,19 +522,38 @@ export function getGeminiReasoningProfile(
   return getGeminiReasoningProfileForModel(modelName);
 }
 
+export function getAnthropicReasoningProfile(
+  modelName?: string,
+  apiBase?: string,
+): AnthropicReasoningProfile {
+  void apiBase;
+  return getAnthropicReasoningProfileForModel(modelName);
+}
+
+export function getQwenReasoningProfile(
+  modelName?: string,
+  apiBase?: string,
+): QwenReasoningProfile {
+  void apiBase;
+  return getQwenReasoningProfileForModel(modelName);
+}
+
 function resolveOpenAIReasoningEffort(
+  provider: "openai" | "grok",
   level: ReasoningLevel,
   modelName?: string,
   apiBase?: string,
 ): OpenAIReasoningEffort | null {
-  const profile = getOpenAIReasoningProfile(modelName, apiBase);
+  const profile =
+    provider === "grok"
+      ? getGrokReasoningProfile(modelName, apiBase)
+      : getOpenAIReasoningProfile(modelName, apiBase);
   const direct = profile.levelToEffort[level];
   if (direct !== undefined) {
     return direct;
   }
 
-  const requestedAlias =
-    level === "xhigh" ? "high" : level === "minimal" ? "low" : null;
+  const requestedAlias = getReasoningLevelAlias(level);
   if (requestedAlias) {
     const aliasValue = profile.levelToEffort[requestedAlias];
     if (aliasValue !== undefined) {
@@ -516,31 +575,82 @@ function resolveOpenAIReasoningEffort(
   return null;
 }
 
+function resolveAnthropicThinkingBudget(
+  level: ReasoningLevel,
+  profile: AnthropicReasoningProfile,
+): number {
+  const direct = profile.levelToBudgetTokens[level];
+  if (Number.isFinite(direct)) {
+    return Number(direct);
+  }
+
+  const aliasLevel = getReasoningLevelAlias(level);
+  if (aliasLevel) {
+    const aliasBudget = profile.levelToBudgetTokens[aliasLevel];
+    if (Number.isFinite(aliasBudget)) {
+      return Number(aliasBudget);
+    }
+  }
+
+  const defaultBudget = profile.levelToBudgetTokens[profile.defaultLevel];
+  if (Number.isFinite(defaultBudget)) {
+    return Number(defaultBudget);
+  }
+
+  return profile.defaultBudgetTokens;
+}
+
+function resolveQwenEnableThinking(
+  level: ReasoningLevel,
+  profile: QwenReasoningProfile,
+): boolean | null {
+  const direct = profile.levelToEnableThinking[level];
+  if (typeof direct === "boolean" || direct === null) {
+    return direct;
+  }
+
+  const aliasLevel = getReasoningLevelAlias(level);
+  if (aliasLevel) {
+    const aliasValue = profile.levelToEnableThinking[aliasLevel];
+    if (typeof aliasValue === "boolean" || aliasValue === null) {
+      return aliasValue;
+    }
+  }
+
+  const defaultValue = profile.levelToEnableThinking[profile.defaultLevel];
+  if (typeof defaultValue === "boolean" || defaultValue === null) {
+    return defaultValue;
+  }
+
+  return profile.defaultEnableThinking;
+}
+
+function isDashScopeApiBase(apiBase?: string): boolean {
+  const normalized = (apiBase || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return /dashscope(?:-intl)?\.aliyuncs\.com/.test(normalized);
+}
+
 function resolveGeminiReasoningOption(
   level: ReasoningLevel,
   profile: GeminiReasoningProfile,
 ): GeminiReasoningOption {
-  const normalizedLevel =
-    level === "xhigh" ? "high" : level === "minimal" ? "low" : level;
-  if (
-    normalizedLevel === "low" ||
-    normalizedLevel === "medium" ||
-    normalizedLevel === "high"
-  ) {
-    const value = profile.levelToValue[normalizedLevel];
-    if (value !== undefined) {
-      return { level: normalizedLevel, value };
+  const direct = profile.levelToValue[level];
+  if (direct !== undefined) {
+    return { level, value: direct };
+  }
+
+  const aliasLevel = getReasoningLevelAlias(level);
+  if (aliasLevel) {
+    const aliasValue = profile.levelToValue[aliasLevel];
+    if (aliasValue !== undefined) {
+      return { level: aliasLevel, value: aliasValue };
     }
   }
 
-  if (
-    profile.defaultLevel === "low" ||
-    profile.defaultLevel === "medium" ||
-    profile.defaultLevel === "high"
-  ) {
-    const defaultValue =
-      profile.levelToValue[profile.defaultLevel] ?? profile.defaultValue;
-    return { level: profile.defaultLevel, value: defaultValue };
+  const defaultMapped = profile.levelToValue[profile.defaultLevel];
+  if (defaultMapped !== undefined) {
+    return { level: profile.defaultLevel, value: defaultMapped };
   }
 
   const byDefaultValue = profile.options.find(
@@ -548,7 +658,7 @@ function resolveGeminiReasoningOption(
   );
   if (byDefaultValue) return byDefaultValue;
 
-  return profile.options[0] || { level: "medium", value: "medium" };
+  return profile.options[0] || { level: "medium", value: profile.defaultValue };
 }
 
 function normalizeTemperature(temperature?: number): number {
@@ -626,6 +736,10 @@ function buildResponsesInput(messages: ChatMessage[]) {
   };
 }
 
+function emptyReasoningPayload() {
+  return { extra: {}, omitTemperature: false } as const;
+}
+
 function buildReasoningPayload(
   reasoning: ReasoningConfig | undefined,
   useResponses: boolean,
@@ -633,18 +747,20 @@ function buildReasoningPayload(
   apiBase?: string,
 ): { extra: Record<string, unknown>; omitTemperature: boolean } {
   if (!reasoning) {
-    return { extra: {}, omitTemperature: false };
+    return emptyReasoningPayload();
   }
   if (!supportsReasoningForModel(reasoning.provider, modelName)) {
-    return { extra: {}, omitTemperature: false };
+    return emptyReasoningPayload();
   }
 
-  if (reasoning.provider === "openai") {
+  if (reasoning.provider === "openai" || reasoning.provider === "grok") {
     const effort = resolveOpenAIReasoningEffort(
+      reasoning.provider,
       reasoning.level,
       modelName,
       apiBase,
     );
+    const omitTemperature = reasoning.provider === "openai";
     if (useResponses) {
       const responseReasoning: Record<string, unknown> = {
         summary: "detailed",
@@ -657,12 +773,12 @@ function buildReasoningPayload(
           reasoning: responseReasoning,
         },
         // GPT-5 families may reject temperature when reasoning is configured.
-        omitTemperature: true,
+        omitTemperature,
       };
     }
     return {
       extra: effort ? { reasoning_effort: effort } : {},
-      omitTemperature: true,
+      omitTemperature,
     };
   }
 
@@ -701,9 +817,33 @@ function buildReasoningPayload(
     };
   }
 
+  if (reasoning.provider === "qwen") {
+    const profile = getQwenReasoningProfile(modelName, apiBase);
+    const enableThinking = resolveQwenEnableThinking(reasoning.level, profile);
+    if (enableThinking === null) {
+      return emptyReasoningPayload();
+    }
+    if (isDashScopeApiBase(apiBase)) {
+      return {
+        extra: {
+          enable_thinking: enableThinking,
+        },
+        omitTemperature: false,
+      };
+    }
+    return {
+      extra: {
+        chat_template_kwargs: {
+          enable_thinking: enableThinking,
+        },
+      },
+      omitTemperature: false,
+    };
+  }
+
   if (reasoning.provider === "deepseek") {
     if (!shouldUseDeepseekThinkingPayload(modelName)) {
-      return { extra: {}, omitTemperature: false };
+      return emptyReasoningPayload();
     }
     return {
       extra: {
@@ -718,13 +858,82 @@ function buildReasoningPayload(
   if (reasoning.provider === "kimi") {
     // Kimi reasoning models generally expose reasoning by model choice;
     // keep payload conservative to avoid provider-specific parameter errors.
+    return emptyReasoningPayload();
+  }
+
+  if (reasoning.provider === "anthropic") {
+    const profile = getAnthropicReasoningProfile(modelName, apiBase);
+    const budgetTokens = resolveAnthropicThinkingBudget(
+      reasoning.level,
+      profile,
+    );
     return {
-      extra: {},
+      extra: {
+        thinking: {
+          type: "enabled",
+          budget_tokens: Math.max(1024, Math.floor(budgetTokens)),
+        },
+      },
       omitTemperature: false,
     };
   }
 
-  return { extra: {}, omitTemperature: false };
+  return emptyReasoningPayload();
+}
+
+function createChatPayloadBuilder(params: {
+  model: string;
+  messages: ChatMessage[];
+  useResponses: boolean;
+  apiBase: string;
+  effectiveTemperature: number;
+  effectiveMaxTokens: number;
+  stream: boolean;
+}) {
+  const {
+    model,
+    messages,
+    useResponses,
+    apiBase,
+    effectiveTemperature,
+    effectiveMaxTokens,
+    stream,
+  } = params;
+  return (reasoningOverride: ReasoningConfig | undefined) => {
+    const reasoningPayload = buildReasoningPayload(
+      reasoningOverride,
+      useResponses,
+      model,
+      apiBase,
+    );
+    const temperatureParam = reasoningPayload.omitTemperature
+      ? {}
+      : { temperature: effectiveTemperature };
+
+    const payload = useResponses
+      ? {
+          model,
+          ...buildResponsesInput(messages),
+          ...reasoningPayload.extra,
+          ...temperatureParam,
+          ...buildResponsesTokenParam(effectiveMaxTokens),
+        }
+      : {
+          model,
+          messages,
+          ...reasoningPayload.extra,
+          ...temperatureParam,
+          ...buildTokenParam(model, effectiveMaxTokens),
+        };
+
+    if (stream) {
+      return {
+        ...payload,
+        stream: true,
+      } as Record<string, unknown>;
+    }
+    return payload as Record<string, unknown>;
+  };
 }
 
 function stripTemperature(payload: Record<string, unknown>) {
@@ -876,6 +1085,8 @@ function isReasoningErrorMessage(errorMessage: string): boolean {
     text.includes("reasoning") ||
     text.includes("effort") ||
     text.includes("thinking") ||
+    text.includes("enable_thinking") ||
+    text.includes("chat_template_kwargs") ||
     text.includes("thinking_level") ||
     text.includes("thinking_budget")
   );
@@ -994,34 +1205,15 @@ export async function callLLM(params: ChatParams): Promise<string> {
     apiBase,
     useResponses ? RESPONSES_ENDPOINT : API_ENDPOINT,
   );
-  const buildPayload = (reasoningOverride: ReasoningConfig | undefined) => {
-    const reasoningPayload = buildReasoningPayload(
-      reasoningOverride,
-      useResponses,
-      model,
-      apiBase,
-    );
-    const temperatureParam = reasoningPayload.omitTemperature
-      ? {}
-      : { temperature: effectiveTemperature };
-    return (
-      useResponses
-        ? {
-            model,
-            ...buildResponsesInput(messages),
-            ...reasoningPayload.extra,
-            ...temperatureParam,
-            ...buildResponsesTokenParam(effectiveMaxTokens),
-          }
-        : {
-            model,
-            messages,
-            ...reasoningPayload.extra,
-            ...temperatureParam,
-            ...buildTokenParam(model, effectiveMaxTokens),
-          }
-    ) as Record<string, unknown>;
-  };
+  const buildPayload = createChatPayloadBuilder({
+    model,
+    messages,
+    useResponses,
+    apiBase,
+    effectiveTemperature,
+    effectiveMaxTokens,
+    stream: false,
+  });
   const res = await postWithReasoningFallback({
     url,
     apiKey,
@@ -1067,36 +1259,15 @@ export async function callLLMStream(
     apiBase,
     useResponses ? RESPONSES_ENDPOINT : API_ENDPOINT,
   );
-  const buildPayload = (reasoningOverride: ReasoningConfig | undefined) => {
-    const reasoningPayload = buildReasoningPayload(
-      reasoningOverride,
-      useResponses,
-      model,
-      apiBase,
-    );
-    const temperatureParam = reasoningPayload.omitTemperature
-      ? {}
-      : { temperature: effectiveTemperature };
-    return (
-      useResponses
-        ? {
-            model,
-            ...buildResponsesInput(messages),
-            ...reasoningPayload.extra,
-            ...temperatureParam,
-            ...buildResponsesTokenParam(effectiveMaxTokens),
-            stream: true,
-          }
-        : {
-            model,
-            messages,
-            ...reasoningPayload.extra,
-            ...temperatureParam,
-            ...buildTokenParam(model, effectiveMaxTokens),
-            stream: true,
-          }
-    ) as Record<string, unknown>;
-  };
+  const buildPayload = createChatPayloadBuilder({
+    model,
+    messages,
+    useResponses,
+    apiBase,
+    effectiveTemperature,
+    effectiveMaxTokens,
+    stream: true,
+  });
   const res = await postWithReasoningFallback({
     url,
     apiKey,
