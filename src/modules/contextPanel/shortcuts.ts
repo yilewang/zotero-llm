@@ -26,7 +26,6 @@ import {
   resetShortcutsToDefault,
 } from "./prefHelpers";
 import { setStatus } from "./textUtils";
-import { sendQuestion } from "./chat";
 
 export async function loadShortcutText(file: string): Promise<string> {
   if (shortcutTextCache.has(file)) {
@@ -381,7 +380,13 @@ export async function renderShortcuts(
     if (!shortcutId || moveMode || !item) return;
     const nextPrompt = (btn.dataset.prompt || "").trim();
     if (!nextPrompt) return;
-    sendQuestion(body, item, nextPrompt);
+    const inputBox = body.querySelector(
+      "#llm-input",
+    ) as HTMLTextAreaElement | null;
+    const sendBtn = body.querySelector("#llm-send") as HTMLButtonElement | null;
+    if (!inputBox || !sendBtn) return;
+    inputBox.value = nextPrompt;
+    sendBtn.click();
   };
 
   container.oncontextmenu = (e: Event) => {

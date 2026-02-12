@@ -211,7 +211,6 @@ function splitTextBlocks(text: string): TextBlock[] {
     // Display math block ($$...$$)
     if (trimmed.startsWith("$$") || /^\$\$/.test(trimmed)) {
       const mathLines: string[] = [line];
-      const startLine = i;
       i++;
 
       // If $$ is on its own line, collect until closing $$
@@ -219,6 +218,28 @@ function splitTextBlocks(text: string): TextBlock[] {
         while (i < lines.length) {
           mathLines.push(lines[i]);
           if (lines[i].trim().endsWith("$$")) {
+            i++;
+            break;
+          }
+          i++;
+        }
+      }
+
+      const raw = mathLines.join("\n");
+      blocks.push({ type: "mathblock", content: raw, raw });
+      continue;
+    }
+
+    // Display math block (\[...\])
+    if (trimmed.startsWith("\\[")) {
+      const mathLines: string[] = [line];
+      i++;
+
+      // If \[ is on its own line, collect until closing \]
+      if (trimmed === "\\[" || !trimmed.endsWith("\\]")) {
+        while (i < lines.length) {
+          mathLines.push(lines[i]);
+          if (lines[i].trim().endsWith("\\]")) {
             i++;
             break;
           }
@@ -307,7 +328,8 @@ function splitTextBlocks(text: string): TextBlock[] {
       !/^\d+\.\s+/.test(lines[i].trim()) &&
       !/^>/.test(lines[i].trim()) &&
       !/^---+$/.test(lines[i].trim()) &&
-      !/^\$\$/.test(lines[i].trim())
+      !/^\$\$/.test(lines[i].trim()) &&
+      !/^\\\[/.test(lines[i].trim())
     ) {
       paraLines.push(lines[i]);
       i++;
@@ -361,10 +383,14 @@ function renderCodeBlock(code: string, raw: string): string {
 
 /** Render display math block */
 function renderMathBlock(content: string): string {
-  // Remove $$ delimiters
+  // Remove $$ or \[...\] delimiters
   let math = content.trim();
-  if (math.startsWith("$$")) math = math.slice(2);
-  if (math.endsWith("$$")) math = math.slice(0, -2);
+  if (math.startsWith("$$") && math.endsWith("$$")) {
+    math = math.slice(2, -2);
+  } else {
+    if (math.startsWith("\\[")) math = math.slice(2);
+    if (math.endsWith("\\]")) math = math.slice(0, -2);
+  }
   math = math.trim();
 
   if (zoteroNoteMode) {

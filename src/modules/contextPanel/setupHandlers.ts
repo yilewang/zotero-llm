@@ -368,7 +368,14 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       return;
     const ownerDoc = body.ownerDocument;
     if (!ownerDoc) return;
-    const selectedImages = selectedImageCache.get(item.id) || [];
+    const { currentModel } = getSelectedModelInfo();
+    const screenshotUnsupported = isScreenshotUnsupportedModel(currentModel);
+    const screenshotDisabledHint = getScreenshotDisabledHint(currentModel);
+    let selectedImages = selectedImageCache.get(item.id) || [];
+    if (screenshotUnsupported && selectedImages.length) {
+      selectedImageCache.delete(item.id);
+      selectedImages = [];
+    }
     if (selectedImages.length) {
       previewStrip.innerHTML = "";
       for (const [index, imageUrl] of selectedImages.entries()) {
@@ -413,17 +420,22 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       }
       previewMeta.textContent = `${selectedImages.length}/${MAX_SELECTED_IMAGES} screenshot${selectedImages.length > 1 ? "s" : ""}`;
       imagePreview.style.display = "flex";
-      screenshotBtn.disabled = selectedImages.length >= MAX_SELECTED_IMAGES;
+      screenshotBtn.disabled =
+        screenshotUnsupported || selectedImages.length >= MAX_SELECTED_IMAGES;
       screenshotBtn.title =
-        selectedImages.length >= MAX_SELECTED_IMAGES
+        screenshotUnsupported
+          ? screenshotDisabledHint
+          : selectedImages.length >= MAX_SELECTED_IMAGES
           ? `Max ${MAX_SELECTED_IMAGES} screenshots`
           : `Add screenshot (${selectedImages.length}/${MAX_SELECTED_IMAGES})`;
     } else {
       imagePreview.style.display = "none";
       previewStrip.innerHTML = "";
       previewMeta.textContent = "0 images selected";
-      screenshotBtn.disabled = false;
-      screenshotBtn.title = "Select figure screenshot";
+      screenshotBtn.disabled = screenshotUnsupported;
+      screenshotBtn.title = screenshotUnsupported
+        ? screenshotDisabledHint
+        : "Select figure screenshot";
     }
     applyResponsiveActionButtonsLayout();
   };
@@ -481,6 +493,16 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       choices,
       currentModel: current?.model || "default",
     };
+  };
+
+  const isScreenshotUnsupportedModel = (modelName: string): boolean => {
+    const normalized = modelName.trim().toLowerCase();
+    return /^deepseek-(?:chat|reasoner)(?:$|[.-])/.test(normalized);
+  };
+
+  const getScreenshotDisabledHint = (modelName: string): string => {
+    const label = modelName.trim() || "current model";
+    return `Screenshots are disabled for ${label}`;
   };
 
   const setActionButtonLabel = (
@@ -847,6 +869,7 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       : "Only one model is configured";
     modelBtn.disabled = !item;
     applyResponsiveActionButtonsLayout();
+    updateImagePreview();
   };
 
   const isPrimaryPointerEvent = (e: Event): boolean => {
@@ -1090,10 +1113,17 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       ? `[Selected text included]\n${text || "Please explain this selected text."}`
       : text;
     inputBox.value = "";
-    const images = (selectedImageCache.get(item.id) || []).slice(
+    const selectedProfile = getSelectedProfile();
+    const activeModelName = (
+      selectedProfile?.model || getSelectedModelInfo().currentModel || ""
+    ).trim();
+    const selectedImages = (selectedImageCache.get(item.id) || []).slice(
       0,
       MAX_SELECTED_IMAGES,
     );
+    const images = isScreenshotUnsupportedModel(activeModelName)
+      ? []
+      : selectedImages;
     // Clear selected images after sending
     selectedImageCache.delete(item.id);
     updateImagePreview();
@@ -1101,7 +1131,6 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       selectedTextCache.delete(item.id);
       updateSelectedTextPreview();
     }
-    const selectedProfile = getSelectedProfile();
     const selectedReasoning = getSelectedReasoning();
     const advancedParams = getAdvancedModelParams(selectedProfile?.key);
     await sendQuestion(
@@ -1268,6 +1297,15 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       e.preventDefault();
       e.stopPropagation();
       if (!item) return;
+      const status = body.querySelector("#llm-status") as HTMLElement | null;
+      const { currentModel } = getSelectedModelInfo();
+      if (isScreenshotUnsupportedModel(currentModel)) {
+        if (status) {
+          setStatus(status, getScreenshotDisabledHint(currentModel), "error");
+        }
+        updateImagePreview();
+        return;
+      }
 
       // Get the main Zotero window
       // Try multiple methods to find the correct window
@@ -1298,7 +1336,6 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
         !!mainWindow.document.documentElement,
       );
 
-      const status = body.querySelector("#llm-status") as HTMLElement | null;
       const currentImages = selectedImageCache.get(item.id) || [];
       if (currentImages.length >= MAX_SELECTED_IMAGES) {
         if (status) {
