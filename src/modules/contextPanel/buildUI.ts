@@ -217,15 +217,6 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   selectedContext.append(selectedContextTop, selectedContextText);
   inputSection.appendChild(selectedContext);
 
-  const inputBox = createElement(doc, "textarea", "llm-input", {
-    id: "llm-input",
-    placeholder: hasItem
-      ? "Ask a question about this paper..."
-      : "Open a PDF first",
-    disabled: !hasItem,
-  });
-  inputSection.appendChild(inputBox);
-
   // Image preview area (shows selected screenshot)
   const imagePreview = createElement(doc, "div", "llm-image-preview", {
     id: "llm-image-preview",
@@ -247,6 +238,16 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   });
 
   imagePreview.append(imagePreviewMeta, previewStrip, removeImgBtn);
+  inputSection.appendChild(imagePreview);
+
+  const inputBox = createElement(doc, "textarea", "llm-input", {
+    id: "llm-input",
+    placeholder: hasItem
+      ? "Ask a question about this paper..."
+      : "Open a PDF first",
+    disabled: !hasItem,
+  });
+  inputSection.appendChild(inputBox);
 
   // Actions row
   const actionsRow = createElement(doc, "div", "llm-actions");
@@ -351,7 +352,6 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
   );
   actionsRight.append(sendSlot);
   actionsRow.append(actionsLeft, actionsRight);
-  inputSection.appendChild(imagePreview);
   inputSection.appendChild(actionsRow);
   container.appendChild(inputSection);
   container.appendChild(statusLine);
