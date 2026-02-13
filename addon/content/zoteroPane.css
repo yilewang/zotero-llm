@@ -1493,6 +1493,8 @@
 }
 
 .llm-preview-remove-one {
+  appearance: none;
+  -moz-appearance: none;
   position: absolute;
   top: -6px;
   left: -6px;
@@ -1502,13 +1504,14 @@
   border: 1px solid #b91c1c;
   background: #dc2626;
   color: #fff;
+  font-family: sans-serif;
   font-size: 12px;
-  line-height: 1;
+  font-weight: 700;
+  line-height: 0;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 0 1px;
 }
 
 .llm-preview-remove-one:hover {
