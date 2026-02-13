@@ -18,6 +18,7 @@ import {
   PERSISTED_HISTORY_LIMIT,
   MAX_HISTORY_MESSAGES,
   AUTO_SCROLL_BOTTOM_THRESHOLD,
+  MAX_SELECTED_IMAGES,
   MODEL_PROFILE_ORDER,
   type ModelProfileKey,
 } from "./constants";
@@ -105,12 +106,18 @@ export async function persistConversationMessage(
 }
 
 export function toPanelMessage(message: StoredChatMessage): Message {
+  const screenshotImages = Array.isArray(message.screenshotImages)
+    ? message.screenshotImages.filter((entry) => Boolean(entry))
+    : undefined;
   return {
     role: message.role,
     text: message.text,
     timestamp: message.timestamp,
     selectedText: message.selectedText,
     selectedTextExpanded: false,
+    screenshotImages,
+    screenshotExpanded: false,
+    screenshotActiveIndex: screenshotImages?.length ? 0 : undefined,
     modelName: message.modelName,
     reasoningSummary: message.reasoningSummary,
     reasoningDetails: message.reasoningDetails,
@@ -343,7 +350,7 @@ export async function sendQuestion(
   await ensureConversationLoaded(item);
   const conversationKey = getConversationKey(item);
 
-  // Add user message (include indicator if image was attached)
+  // Add user message with attached selected text / screenshots metadata
   if (!chatHistory.has(conversationKey)) {
     chatHistory.set(conversationKey, []);
   }
@@ -366,16 +373,26 @@ export async function sendQuestion(
     advanced || getAdvancedModelParamsForProfile(fallbackProfile.key);
   const shownQuestion = displayQuestion || question;
   const selectedTextForMessage = sanitizeText(selectedText || "").trim();
-  const imageCount = Array.isArray(images) ? images.filter(Boolean).length : 0;
-  const userMessageText = imageCount
-    ? `${shownQuestion}\n[📷 ${imageCount} image${imageCount > 1 ? "s" : ""} attached]`
-    : shownQuestion;
+  const screenshotImagesForMessage = Array.isArray(images)
+    ? images
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .slice(0, MAX_SELECTED_IMAGES)
+    : [];
+  const imageCount = screenshotImagesForMessage.length;
+  const userMessageText = shownQuestion;
   const userMessage: Message = {
     role: "user",
     text: userMessageText,
     timestamp: Date.now(),
     selectedText: selectedTextForMessage || undefined,
     selectedTextExpanded: false,
+    screenshotImages: screenshotImagesForMessage.length
+      ? screenshotImagesForMessage
+      : undefined,
+    screenshotExpanded: false,
+    screenshotActiveIndex: 0,
   };
   history.push(userMessage);
   await persistConversationMessage(conversationKey, {
@@ -383,6 +400,7 @@ export async function sendQuestion(
     text: userMessage.text,
     timestamp: userMessage.timestamp,
     selectedText: userMessage.selectedText,
+    screenshotImages: userMessage.screenshotImages,
   });
 
   const assistantMessage: Message = {
@@ -589,6 +607,103 @@ export function refreshChat(body: Element, item?: Zotero.Item | null) {
     bubble.className = `llm-bubble ${isUser ? "user" : "assistant"}`;
 
     if (isUser) {
+      const screenshotImages = Array.isArray(msg.screenshotImages)
+        ? msg.screenshotImages.filter((entry) => Boolean(entry))
+        : [];
+      if (screenshotImages.length) {
+        const screenshotBar = doc.createElement("button") as HTMLButtonElement;
+        screenshotBar.type = "button";
+        screenshotBar.className = "llm-user-screenshots-bar";
+
+        const screenshotIcon = doc.createElement("span") as HTMLSpanElement;
+        screenshotIcon.className = "llm-user-screenshots-icon";
+        screenshotIcon.textContent = "🖼";
+
+        const screenshotLabel = doc.createElement("span") as HTMLSpanElement;
+        screenshotLabel.className = "llm-user-screenshots-label";
+        screenshotLabel.textContent = `screenshots (${screenshotImages.length}/${MAX_SELECTED_IMAGES}) embedded`;
+
+        screenshotBar.append(screenshotIcon, screenshotLabel);
+
+        const screenshotExpanded = doc.createElement("div") as HTMLDivElement;
+        screenshotExpanded.className = "llm-user-screenshots-expanded";
+
+        const thumbStrip = doc.createElement("div") as HTMLDivElement;
+        thumbStrip.className = "llm-user-screenshots-thumbs";
+
+        const previewWrap = doc.createElement("div") as HTMLDivElement;
+        previewWrap.className = "llm-user-screenshots-preview";
+        const previewImg = doc.createElement("img") as HTMLImageElement;
+        previewImg.className = "llm-user-screenshots-preview-img";
+        previewImg.alt = "Screenshot preview";
+        previewWrap.appendChild(previewImg);
+
+        const thumbButtons: HTMLButtonElement[] = [];
+        screenshotImages.forEach((imageUrl, index) => {
+          const thumbBtn = doc.createElement("button") as HTMLButtonElement;
+          thumbBtn.type = "button";
+          thumbBtn.className = "llm-user-screenshot-thumb";
+          thumbBtn.title = `Screenshot ${index + 1}`;
+
+          const thumbImg = doc.createElement("img") as HTMLImageElement;
+          thumbImg.className = "llm-user-screenshot-thumb-img";
+          thumbImg.src = imageUrl;
+          thumbImg.alt = `Screenshot ${index + 1}`;
+          thumbBtn.appendChild(thumbImg);
+
+          thumbBtn.addEventListener("click", (e: Event) => {
+            e.preventDefault();
+            e.stopPropagation();
+            msg.screenshotActiveIndex = index;
+            if (!msg.screenshotExpanded) {
+              msg.screenshotExpanded = true;
+            }
+            applyScreenshotState();
+          });
+          thumbButtons.push(thumbBtn);
+          thumbStrip.appendChild(thumbBtn);
+        });
+
+        screenshotExpanded.append(thumbStrip, previewWrap);
+
+        const applyScreenshotState = () => {
+          const expanded = Boolean(msg.screenshotExpanded);
+          let activeIndex =
+            typeof msg.screenshotActiveIndex === "number"
+              ? Math.floor(msg.screenshotActiveIndex)
+              : 0;
+          if (activeIndex < 0 || activeIndex >= screenshotImages.length) {
+            activeIndex = 0;
+            msg.screenshotActiveIndex = 0;
+          }
+          screenshotBar.classList.toggle("expanded", expanded);
+          screenshotBar.setAttribute(
+            "aria-expanded",
+            expanded ? "true" : "false",
+          );
+          screenshotExpanded.hidden = !expanded;
+          screenshotExpanded.style.display = expanded ? "flex" : "none";
+          previewImg.src = screenshotImages[activeIndex];
+          thumbButtons.forEach((btn, index) => {
+            btn.classList.toggle("active", index === activeIndex);
+          });
+          screenshotBar.title = expanded
+            ? "Collapse screenshots"
+            : "Expand screenshots";
+        };
+
+        applyScreenshotState();
+        screenshotBar.addEventListener("click", (e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          msg.screenshotExpanded = !msg.screenshotExpanded;
+          applyScreenshotState();
+        });
+
+        wrapper.appendChild(screenshotBar);
+        wrapper.appendChild(screenshotExpanded);
+      }
+
       const selectedText = sanitizeText(msg.selectedText || "").trim();
       if (selectedText) {
         const selectedBar = doc.createElement("button") as HTMLButtonElement;
@@ -616,6 +731,7 @@ export function refreshChat(body: Element, item?: Zotero.Item | null) {
             expanded ? "true" : "false",
           );
           selectedExpanded.hidden = !expanded;
+          selectedExpanded.style.display = expanded ? "block" : "none";
           selectedBar.title = expanded
             ? "Collapse selected text"
             : "Expand selected text";

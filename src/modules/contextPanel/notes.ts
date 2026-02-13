@@ -4,6 +4,7 @@ import {
   escapeNoteHtml,
   getCurrentLocalTimestamp,
 } from "./textUtils";
+import { MAX_SELECTED_IMAGES } from "./constants";
 import {
   getTrackedAssistantNoteForParent,
   removeAssistantNoteMapEntry,
@@ -61,18 +62,25 @@ export function buildChatHistoryNotePayload(messages: Message[]): {
   for (const msg of messages) {
     const text = sanitizeText(msg.text || "").trim();
     const selectedText = sanitizeText(msg.selectedText || "").trim();
-    if (!text && !selectedText) continue;
+    const screenshotCount = Array.isArray(msg.screenshotImages)
+      ? msg.screenshotImages.filter((entry) => Boolean(entry)).length
+      : 0;
+    if (!text && !selectedText && !screenshotCount) continue;
     const textWithSelectedContext =
       msg.role === "user" && selectedText
         ? `Selected text:\n${selectedText}\n\n${text}`
         : text;
+    const textWithContext =
+      msg.role === "user" && screenshotCount
+        ? `${textWithSelectedContext}${textWithSelectedContext ? "\n\n" : ""}screenshots (${screenshotCount}/${MAX_SELECTED_IMAGES}) embedded`
+        : textWithSelectedContext;
     const speaker =
       msg.role === "user"
         ? "user"
         : sanitizeText(msg.modelName || "").trim() || "model";
-    const rendered = renderChatMessageHtmlForNote(textWithSelectedContext);
+    const rendered = renderChatMessageHtmlForNote(textWithContext);
     if (!rendered) continue;
-    textLines.push(`${speaker}: ${textWithSelectedContext}`);
+    textLines.push(`${speaker}: ${textWithContext}`);
     htmlBlocks.push(
       `<p><strong>${escapeNoteHtml(speaker)}:</strong></p><div>${rendered}</div>`,
     );

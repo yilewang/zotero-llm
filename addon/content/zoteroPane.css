@@ -403,6 +403,116 @@
   overflow-wrap: anywhere;
 }
 
+.llm-user-screenshots-bar {
+  align-self: flex-end;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  width: clamp(170px, 52%, 360px);
+  max-width: 100%;
+  padding: 3px 8px;
+  margin: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fill-secondary);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--llm-fs-12);
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.llm-user-screenshots-bar:hover {
+  color: var(--fill-primary);
+}
+
+.llm-user-screenshots-bar:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.llm-user-screenshots-bar.expanded {
+  color: var(--fill-primary);
+}
+
+.llm-user-screenshots-icon {
+  flex: 0 0 auto;
+  font-size: var(--llm-fs-13);
+  line-height: 1.1;
+  opacity: 0.9;
+}
+
+.llm-user-screenshots-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.llm-user-screenshots-expanded {
+  align-self: flex-end;
+  width: min(95%, 620px);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.llm-user-screenshots-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.llm-user-screenshot-thumb {
+  border: 1px solid var(--stroke-secondary);
+  background: transparent;
+  border-radius: 6px;
+  padding: 0;
+  width: 64px;
+  height: 44px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.llm-user-screenshot-thumb:hover {
+  border-color: var(--color-accent);
+}
+
+.llm-user-screenshot-thumb.active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.llm-user-screenshot-thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.llm-user-screenshots-preview {
+  width: 100%;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--stroke-secondary);
+  background: rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.llm-user-screenshots-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
 .llm-bubble.assistant {
   background: transparent;
   color: var(--fill-primary);

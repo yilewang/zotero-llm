@@ -3,6 +3,7 @@ export type StoredChatMessage = {
   text: string;
   timestamp: number;
   selectedText?: string;
+  screenshotImages?: string[];
   modelName?: string;
   reasoningSummary?: string;
   reasoningDetails?: string;
@@ -31,6 +32,7 @@ export async function initChatStore(): Promise<void> {
         text TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
         selected_text TEXT,
+        screenshot_images TEXT,
         model_name TEXT,
         reasoning_summary TEXT,
         reasoning_details TEXT
@@ -58,6 +60,15 @@ export async function initChatStore(): Promise<void> {
          ADD COLUMN selected_text TEXT`,
       );
     }
+    const hasScreenshotImagesColumn = Boolean(
+      columns?.some((column) => column?.name === "screenshot_images"),
+    );
+    if (!hasScreenshotImagesColumn) {
+      await Zotero.DB.queryAsync(
+        `ALTER TABLE ${CHAT_MESSAGES_TABLE}
+         ADD COLUMN screenshot_images TEXT`,
+      );
+    }
 
     await Zotero.DB.queryAsync(
       `CREATE INDEX IF NOT EXISTS zoterollm_chat_messages_conversation_idx
@@ -79,6 +90,7 @@ export async function loadConversation(
             text,
             timestamp,
             selected_text AS selectedText,
+            screenshot_images AS screenshotImages,
             model_name AS modelName,
             reasoning_summary AS reasoningSummary,
             reasoning_details AS reasoningDetails
@@ -93,6 +105,7 @@ export async function loadConversation(
         text: unknown;
         timestamp: unknown;
         selectedText?: unknown;
+        screenshotImages?: unknown;
         modelName?: unknown;
         reasoningSummary?: unknown;
         reasoningDetails?: unknown;
@@ -112,12 +125,30 @@ export async function loadConversation(
     if (!role) continue;
 
     const timestamp = Number(row.timestamp);
+    let screenshotImages: string[] | undefined;
+    if (typeof row.screenshotImages === "string" && row.screenshotImages) {
+      try {
+        const parsed = JSON.parse(row.screenshotImages) as unknown;
+        if (Array.isArray(parsed)) {
+          const normalized = parsed.filter(
+            (entry): entry is string =>
+              typeof entry === "string" && Boolean(entry.trim()),
+          );
+          if (normalized.length) {
+            screenshotImages = normalized;
+          }
+        }
+      } catch (_err) {
+        screenshotImages = undefined;
+      }
+    }
     messages.push({
       role,
       text: typeof row.text === "string" ? row.text : "",
       timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
       selectedText:
         typeof row.selectedText === "string" ? row.selectedText : undefined,
+      screenshotImages,
       modelName: typeof row.modelName === "string" ? row.modelName : undefined,
       reasoningSummary:
         typeof row.reasoningSummary === "string"
@@ -141,16 +172,20 @@ export async function appendMessage(
   if (!normalizedKey) return;
 
   const timestamp = Number(message.timestamp);
+  const screenshotImages = Array.isArray(message.screenshotImages)
+    ? message.screenshotImages.filter((entry) => Boolean(entry))
+    : [];
   await Zotero.DB.queryAsync(
     `INSERT INTO ${CHAT_MESSAGES_TABLE}
-      (conversation_key, role, text, timestamp, selected_text, model_name, reasoning_summary, reasoning_details)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (conversation_key, role, text, timestamp, selected_text, screenshot_images, model_name, reasoning_summary, reasoning_details)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       normalizedKey,
       message.role,
       message.text,
       Number.isFinite(timestamp) ? Math.floor(timestamp) : Date.now(),
       message.selectedText || null,
+      screenshotImages.length ? JSON.stringify(screenshotImages) : null,
       message.modelName || null,
       message.reasoningSummary || null,
       message.reasoningDetails || null,

@@ -6,6 +6,9 @@ export interface Message {
   timestamp: number;
   selectedText?: string;
   selectedTextExpanded?: boolean;
+  screenshotImages?: string[];
+  screenshotExpanded?: boolean;
+  screenshotActiveIndex?: number;
   modelName?: string;
   streaming?: boolean;
   reasoningSummary?: string;
