@@ -52,6 +52,33 @@ export function renderChatMessageHtmlForNote(text: string): string {
   }
 }
 
+function normalizeScreenshotImagesForNote(images: unknown): string[] {
+  if (!Array.isArray(images)) return [];
+  const out: string[] = [];
+  for (const raw of images) {
+    if (typeof raw !== "string") continue;
+    const src = raw.trim();
+    if (!src) continue;
+    // Persist only embedded image data URLs; blob/object URLs are ephemeral.
+    if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(src)) continue;
+    out.push(src);
+    if (out.length >= MAX_SELECTED_IMAGES) break;
+  }
+  return out;
+}
+
+function buildScreenshotImagesHtmlForNote(images: string[]): string {
+  if (!images.length) return "";
+  const label = `Screenshots (${images.length}/${MAX_SELECTED_IMAGES}) are embedded below`;
+  const blocks = images
+    .map((src, index) => {
+      const alt = `Screenshot ${index + 1}`;
+      return `<p><img src="${escapeNoteHtml(src)}" alt="${escapeNoteHtml(alt)}"/></p>`;
+    })
+    .join("");
+  return `<div><p>${escapeNoteHtml(label)}</p>${blocks}</div>`;
+}
+
 export function buildChatHistoryNotePayload(messages: Message[]): {
   noteHtml: string;
   noteText: string;
@@ -62,35 +89,48 @@ export function buildChatHistoryNotePayload(messages: Message[]): {
   for (const msg of messages) {
     const text = sanitizeText(msg.text || "").trim();
     const selectedText = sanitizeText(msg.selectedText || "").trim();
-    const screenshotCount = Array.isArray(msg.screenshotImages)
-      ? msg.screenshotImages.filter((entry) => Boolean(entry)).length
-      : 0;
+    const screenshotImages = normalizeScreenshotImagesForNote(
+      msg.screenshotImages,
+    );
+    const screenshotCount = screenshotImages.length;
     if (!text && !selectedText && !screenshotCount) continue;
     let textWithContext = text;
+    let htmlTextWithContext = text;
     if (msg.role === "user") {
       const userBlocks: string[] = [];
+      const userHtmlBlocks: string[] = [];
       if (selectedText) {
         userBlocks.push(`Selected text:\n${selectedText}`);
+        userHtmlBlocks.push(`Selected text:\n${selectedText}`);
       }
       if (screenshotCount) {
         userBlocks.push(
-          `screenshots (${screenshotCount}/${MAX_SELECTED_IMAGES}) embedded`,
+          `Screenshots (${screenshotCount}/${MAX_SELECTED_IMAGES}) are embedded below`,
         );
       }
       if (text) {
         userBlocks.push(text);
+        userHtmlBlocks.push(text);
       }
       textWithContext = userBlocks.join("\n\n");
+      htmlTextWithContext = userHtmlBlocks.join("\n\n");
     }
     const speaker =
       msg.role === "user"
         ? "user"
         : sanitizeText(msg.modelName || "").trim() || "model";
-    const rendered = renderChatMessageHtmlForNote(textWithContext);
-    if (!rendered) continue;
+    const screenshotHtml =
+      msg.role === "user"
+        ? buildScreenshotImagesHtmlForNote(screenshotImages)
+        : "";
+    const rendered = renderChatMessageHtmlForNote(
+      msg.role === "user" ? htmlTextWithContext : textWithContext,
+    );
+    if (!rendered && !screenshotHtml) continue;
     textLines.push(`${speaker}: ${textWithContext}`);
+    const renderedBlock = rendered ? `<div>${rendered}</div>` : "";
     htmlBlocks.push(
-      `<p><strong>${escapeNoteHtml(speaker)}:</strong></p><div>${rendered}</div>`,
+      `<p><strong>${escapeNoteHtml(speaker)}:</strong></p>${renderedBlock}${screenshotHtml}`,
     );
   }
   const noteText = textLines.join("\n\n");
