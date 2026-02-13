@@ -2,6 +2,7 @@ export type StoredChatMessage = {
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  selectedText?: string;
   modelName?: string;
   reasoningSummary?: string;
   reasoningDetails?: string;
@@ -29,6 +30,7 @@ export async function initChatStore(): Promise<void> {
         role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
         text TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
+        selected_text TEXT,
         model_name TEXT,
         reasoning_summary TEXT,
         reasoning_details TEXT
@@ -45,6 +47,15 @@ export async function initChatStore(): Promise<void> {
       await Zotero.DB.queryAsync(
         `ALTER TABLE ${CHAT_MESSAGES_TABLE}
          ADD COLUMN model_name TEXT`,
+      );
+    }
+    const hasSelectedTextColumn = Boolean(
+      columns?.some((column) => column?.name === "selected_text"),
+    );
+    if (!hasSelectedTextColumn) {
+      await Zotero.DB.queryAsync(
+        `ALTER TABLE ${CHAT_MESSAGES_TABLE}
+         ADD COLUMN selected_text TEXT`,
       );
     }
 
@@ -67,6 +78,7 @@ export async function loadConversation(
     `SELECT role,
             text,
             timestamp,
+            selected_text AS selectedText,
             model_name AS modelName,
             reasoning_summary AS reasoningSummary,
             reasoning_details AS reasoningDetails
@@ -80,6 +92,7 @@ export async function loadConversation(
         role: unknown;
         text: unknown;
         timestamp: unknown;
+        selectedText?: unknown;
         modelName?: unknown;
         reasoningSummary?: unknown;
         reasoningDetails?: unknown;
@@ -103,6 +116,8 @@ export async function loadConversation(
       role,
       text: typeof row.text === "string" ? row.text : "",
       timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+      selectedText:
+        typeof row.selectedText === "string" ? row.selectedText : undefined,
       modelName: typeof row.modelName === "string" ? row.modelName : undefined,
       reasoningSummary:
         typeof row.reasoningSummary === "string"
@@ -128,13 +143,14 @@ export async function appendMessage(
   const timestamp = Number(message.timestamp);
   await Zotero.DB.queryAsync(
     `INSERT INTO ${CHAT_MESSAGES_TABLE}
-      (conversation_key, role, text, timestamp, model_name, reasoning_summary, reasoning_details)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      (conversation_key, role, text, timestamp, selected_text, model_name, reasoning_summary, reasoning_details)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       normalizedKey,
       message.role,
       message.text,
       Number.isFinite(timestamp) ? Math.floor(timestamp) : Date.now(),
+      message.selectedText || null,
       message.modelName || null,
       message.reasoningSummary || null,
       message.reasoningDetails || null,

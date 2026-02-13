@@ -4,6 +4,8 @@ export interface Message {
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  selectedText?: string;
+  selectedTextExpanded?: boolean;
   modelName?: string;
   streaming?: boolean;
   reasoningSummary?: string;

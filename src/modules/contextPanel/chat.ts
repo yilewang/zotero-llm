@@ -49,7 +49,6 @@ import {
   formatTime,
   setStatus,
   getSelectedTextWithinBubble,
-  buildQuestionWithSelectedText,
 } from "./textUtils";
 import { positionMenuAtPointer } from "./menuPositioning";
 import {
@@ -110,6 +109,8 @@ export function toPanelMessage(message: StoredChatMessage): Message {
     role: message.role,
     text: message.text,
     timestamp: message.timestamp,
+    selectedText: message.selectedText,
+    selectedTextExpanded: false,
     modelName: message.modelName,
     reasoningSummary: message.reasoningSummary,
     reasoningDetails: message.reasoningDetails,
@@ -319,6 +320,7 @@ export async function sendQuestion(
   reasoning?: LLMReasoningConfig,
   advanced?: AdvancedModelParams,
   displayQuestion?: string,
+  selectedText?: string,
 ) {
   const inputBox = body.querySelector(
     "#llm-input",
@@ -363,6 +365,7 @@ export async function sendQuestion(
   const effectiveAdvanced =
     advanced || getAdvancedModelParamsForProfile(fallbackProfile.key);
   const shownQuestion = displayQuestion || question;
+  const selectedTextForMessage = sanitizeText(selectedText || "").trim();
   const imageCount = Array.isArray(images) ? images.filter(Boolean).length : 0;
   const userMessageText = imageCount
     ? `${shownQuestion}\n[📷 ${imageCount} image${imageCount > 1 ? "s" : ""} attached]`
@@ -371,12 +374,15 @@ export async function sendQuestion(
     role: "user",
     text: userMessageText,
     timestamp: Date.now(),
+    selectedText: selectedTextForMessage || undefined,
+    selectedTextExpanded: false,
   };
   history.push(userMessage);
   await persistConversationMessage(conversationKey, {
     role: "user",
     text: userMessage.text,
     timestamp: userMessage.timestamp,
+    selectedText: userMessage.selectedText,
   });
 
   const assistantMessage: Message = {
@@ -583,6 +589,47 @@ export function refreshChat(body: Element, item?: Zotero.Item | null) {
     bubble.className = `llm-bubble ${isUser ? "user" : "assistant"}`;
 
     if (isUser) {
+      const selectedText = sanitizeText(msg.selectedText || "").trim();
+      if (selectedText) {
+        const selectedBar = doc.createElement("button") as HTMLButtonElement;
+        selectedBar.type = "button";
+        selectedBar.className = "llm-user-selected-text";
+
+        const selectedIcon = doc.createElement("span") as HTMLSpanElement;
+        selectedIcon.className = "llm-user-selected-text-icon";
+        selectedIcon.textContent = "↳";
+
+        const selectedContent = doc.createElement("span") as HTMLSpanElement;
+        selectedContent.className = "llm-user-selected-text-content";
+        selectedContent.textContent = selectedText;
+
+        const selectedExpanded = doc.createElement("div") as HTMLDivElement;
+        selectedExpanded.className = "llm-user-selected-text-expanded";
+        selectedExpanded.textContent = selectedText;
+
+        selectedBar.append(selectedIcon, selectedContent);
+        const applySelectedTextState = () => {
+          const expanded = Boolean(msg.selectedTextExpanded);
+          selectedBar.classList.toggle("expanded", expanded);
+          selectedBar.setAttribute(
+            "aria-expanded",
+            expanded ? "true" : "false",
+          );
+          selectedExpanded.hidden = !expanded;
+          selectedBar.title = expanded
+            ? "Collapse selected text"
+            : "Expand selected text";
+        };
+        applySelectedTextState();
+        selectedBar.addEventListener("click", (e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          msg.selectedTextExpanded = !msg.selectedTextExpanded;
+          applySelectedTextState();
+        });
+        wrapper.appendChild(selectedBar);
+        wrapper.appendChild(selectedExpanded);
+      }
       bubble.textContent = sanitizeText(msg.text || "");
     } else {
       const hasModelName = Boolean(msg.modelName?.trim());

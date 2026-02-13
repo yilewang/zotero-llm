@@ -422,10 +422,9 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       imagePreview.style.display = "flex";
       screenshotBtn.disabled =
         screenshotUnsupported || selectedImages.length >= MAX_SELECTED_IMAGES;
-      screenshotBtn.title =
-        screenshotUnsupported
-          ? screenshotDisabledHint
-          : selectedImages.length >= MAX_SELECTED_IMAGES
+      screenshotBtn.title = screenshotUnsupported
+        ? screenshotDisabledHint
+        : selectedImages.length >= MAX_SELECTED_IMAGES
           ? `Max ${MAX_SELECTED_IMAGES} screenshots`
           : `Add screenshot (${selectedImages.length}/${MAX_SELECTED_IMAGES})`;
     } else {
@@ -1106,16 +1105,17 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
     const text = inputBox.value.trim();
     const selectedText = selectedTextCache.get(item.id) || "";
     if (!text && !selectedText) return;
+    const promptText = text || "Please explain this selected text.";
     const composedQuestion = selectedText
       ? buildQuestionWithSelectedText(selectedText, text)
       : text;
-    const displayQuestion = selectedText
-      ? `[Selected text included]\n${text || "Please explain this selected text."}`
-      : text;
+    const displayQuestion = selectedText ? promptText : text;
     inputBox.value = "";
     const selectedProfile = getSelectedProfile();
     const activeModelName = (
-      selectedProfile?.model || getSelectedModelInfo().currentModel || ""
+      selectedProfile?.model ||
+      getSelectedModelInfo().currentModel ||
+      ""
     ).trim();
     const selectedImages = (selectedImageCache.get(item.id) || []).slice(
       0,
@@ -1144,6 +1144,7 @@ export function setupHandlers(body: Element, item?: Zotero.Item | null) {
       selectedReasoning,
       advancedParams,
       displayQuestion,
+      selectedText || undefined,
     );
   };
 

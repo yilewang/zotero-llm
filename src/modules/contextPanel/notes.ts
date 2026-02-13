@@ -60,14 +60,19 @@ export function buildChatHistoryNotePayload(messages: Message[]): {
   const htmlBlocks: string[] = [];
   for (const msg of messages) {
     const text = sanitizeText(msg.text || "").trim();
-    if (!text) continue;
+    const selectedText = sanitizeText(msg.selectedText || "").trim();
+    if (!text && !selectedText) continue;
+    const textWithSelectedContext =
+      msg.role === "user" && selectedText
+        ? `Selected text:\n${selectedText}\n\n${text}`
+        : text;
     const speaker =
       msg.role === "user"
         ? "user"
         : sanitizeText(msg.modelName || "").trim() || "model";
-    const rendered = renderChatMessageHtmlForNote(text);
+    const rendered = renderChatMessageHtmlForNote(textWithSelectedContext);
     if (!rendered) continue;
-    textLines.push(`${speaker}: ${text}`);
+    textLines.push(`${speaker}: ${textWithSelectedContext}`);
     htmlBlocks.push(
       `<p><strong>${escapeNoteHtml(speaker)}:</strong></p><div>${rendered}</div>`,
     );
