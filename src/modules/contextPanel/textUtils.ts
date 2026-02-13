@@ -46,6 +46,39 @@ export function truncateSelectedText(text: string): string {
   return `${text.slice(0, SELECTED_TEXT_PREVIEW_LENGTH - 1)}\u2026`;
 }
 
+export function isLikelyCorruptedSelectedText(text: string): boolean {
+  const sample = sanitizeText(text || "");
+  if (!sample) return false;
+
+  // Most common hard signal of broken extraction/encoding.
+  if (sample.includes("\uFFFD") || sample.includes("�")) return true;
+
+  // Typical UTF-8/Latin-1 mojibake markers.
+  if (/Ã.|Â.|â(?:€|€™|€œ|€|€˜|€¦)/.test(sample)) return true;
+
+  // Heuristic: math-heavy English text unexpectedly mixed with a small amount
+  // of CJK/Hangul often indicates corrupted glyph extraction in PDFs.
+  const hasMathLikeContext =
+    /[=+\-*/^_(){}\\]|[∑∏√∞≤≥≈≠±→↔]|[α-ωΑ-Ωµμ]/u.test(sample);
+  const latinCount = (sample.match(/[A-Za-z]/g) || []).length;
+  const cjkLikeMatches =
+    sample.match(
+      /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/gu,
+    ) || [];
+  const cjkLikeCount = cjkLikeMatches.length;
+
+  if (
+    hasMathLikeContext &&
+    latinCount >= 8 &&
+    cjkLikeCount > 0 &&
+    cjkLikeCount < latinCount
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function buildQuestionWithSelectedText(
   selectedText: string,
   userPrompt: string,
@@ -76,7 +109,7 @@ export function formatTime(timestamp: number) {
 export function setStatus(
   statusEl: HTMLElement,
   text: string,
-  variant: "ready" | "sending" | "error",
+  variant: "ready" | "sending" | "error" | "warning",
 ) {
   statusEl.textContent = text;
   statusEl.className = `llm-status llm-status-${variant}`;

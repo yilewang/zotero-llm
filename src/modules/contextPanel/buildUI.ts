@@ -214,8 +214,22 @@ function buildUI(body: Element, item?: Zotero.Item | null) {
       id: "llm-selected-context-text",
     },
   );
+  const selectedContextWarning = createElement(
+    doc,
+    "div",
+    "llm-selected-context-warning",
+    {
+      id: "llm-selected-context-warning",
+      textContent: "Recommend to use screenshots option for corrupted text",
+    },
+  );
+  selectedContextWarning.style.display = "none";
   selectedContextTop.append(selectedContextLabel, selectedContextClear);
-  selectedContext.append(selectedContextTop, selectedContextText);
+  selectedContext.append(
+    selectedContextTop,
+    selectedContextText,
+    selectedContextWarning,
+  );
   inputSection.appendChild(selectedContext);
 
   // Image preview area (shows selected screenshot)

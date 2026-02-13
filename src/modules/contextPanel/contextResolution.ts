@@ -2,6 +2,7 @@ import {
   sanitizeText,
   normalizeSelectedText,
   truncateSelectedText,
+  isLikelyCorruptedSelectedText,
   setStatus,
 } from "./textUtils";
 import { selectedTextCache, recentReaderSelectionCache } from "./state";
@@ -382,6 +383,9 @@ export function applySelectedTextPreview(body: Element, itemId: number) {
   const previewText = body.querySelector(
     "#llm-selected-context-text",
   ) as HTMLDivElement | null;
+  const previewWarning = body.querySelector(
+    "#llm-selected-context-warning",
+  ) as HTMLDivElement | null;
   const selectTextBtn = body.querySelector(
     "#llm-select-text",
   ) as HTMLButtonElement | null;
@@ -390,6 +394,7 @@ export function applySelectedTextPreview(body: Element, itemId: number) {
   if (!selectedText) {
     previewBox.style.display = "none";
     previewText.textContent = "";
+    if (previewWarning) previewWarning.style.display = "none";
     if (selectTextBtn) {
       selectTextBtn.classList.remove("llm-action-btn-active");
     }
@@ -397,6 +402,11 @@ export function applySelectedTextPreview(body: Element, itemId: number) {
   }
   previewBox.style.display = "flex";
   previewText.textContent = truncateSelectedText(selectedText);
+  if (previewWarning) {
+    previewWarning.style.display = isLikelyCorruptedSelectedText(selectedText)
+      ? "block"
+      : "none";
+  }
   if (selectTextBtn) {
     selectTextBtn.classList.add("llm-action-btn-active");
   }

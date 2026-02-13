@@ -66,14 +66,22 @@ export function buildChatHistoryNotePayload(messages: Message[]): {
       ? msg.screenshotImages.filter((entry) => Boolean(entry)).length
       : 0;
     if (!text && !selectedText && !screenshotCount) continue;
-    const textWithSelectedContext =
-      msg.role === "user" && selectedText
-        ? `Selected text:\n${selectedText}\n\n${text}`
-        : text;
-    const textWithContext =
-      msg.role === "user" && screenshotCount
-        ? `${textWithSelectedContext}${textWithSelectedContext ? "\n\n" : ""}screenshots (${screenshotCount}/${MAX_SELECTED_IMAGES}) embedded`
-        : textWithSelectedContext;
+    let textWithContext = text;
+    if (msg.role === "user") {
+      const userBlocks: string[] = [];
+      if (selectedText) {
+        userBlocks.push(`Selected text:\n${selectedText}`);
+      }
+      if (screenshotCount) {
+        userBlocks.push(
+          `screenshots (${screenshotCount}/${MAX_SELECTED_IMAGES}) embedded`,
+        );
+      }
+      if (text) {
+        userBlocks.push(text);
+      }
+      textWithContext = userBlocks.join("\n\n");
+    }
     const speaker =
       msg.role === "user"
         ? "user"
