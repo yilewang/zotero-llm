@@ -215,7 +215,8 @@ export function registerReaderSelectionTracking() {
             "border:1px solid rgba(130,130,130,0.38)",
             "border-radius:6px",
             "background:rgba(255,255,255,0.04)",
-            "color:#fff",
+            // Keep text readable across light/dark themes.
+            "color:inherit",
             "font-size:12px",
             "line-height:1.25",
             "text-align:center",
